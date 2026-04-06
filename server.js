@@ -1,20 +1,115 @@
 const express = require('express');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, execFileSync, execFile } = require('child_process');
+const util = require('util');
+const execFileAsync = util.promisify(execFile);
 const kill = require('tree-kill');
 const path = require('path');
 const fs = require('fs');
+const { WebSocketServer } = require('ws');
+const http = require('http');
+
+const os = require('os');
+
+// Ensure the running node's bin dir is in PATH (covers nvm-managed CLIs)
+const nodeBinDir = path.dirname(process.execPath);
+if (!process.env.PATH.split(':').includes(nodeBinDir)) {
+  process.env.PATH = nodeBinDir + ':' + process.env.PATH;
+}
+
+// Ensure ~/.local/bin is in PATH (covers newly upgraded native CLIs like claude)
+const localBinDir = path.join(os.homedir(), '.local', 'bin');
+if (!process.env.PATH.split(':').includes(localBinDir)) {
+  process.env.PATH = localBinDir + ':' + process.env.PATH;
+}
+
+const systemConfigPath = path.join(__dirname, 'system.config.json');
+const systemConfig = fs.existsSync(systemConfigPath) ? JSON.parse(fs.readFileSync(systemConfigPath, 'utf-8')) : {};
 
 const app = express();
-const PORT = 1337;
-const MAX_LOG_LINES = 500;
+const PORT = parseInt(process.env.PORT) || systemConfig.port || 1337;
+const MAX_LOG_LINES = systemConfig.maxLogLines || 500;
 
 const configPath = path.join(__dirname, 'processes.config.json');
-let processConfigs = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+let processConfigs = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf-8')) : [];
 
 const envConfigPath = path.join(__dirname, 'env.config.json');
 let envVars = {};
 if (fs.existsSync(envConfigPath)) {
   envVars = JSON.parse(fs.readFileSync(envConfigPath, 'utf-8'));
+}
+
+const groupsConfigPath = path.join(__dirname, 'groups.config.json');
+const DEFAULT_GROUP_DEFS = [
+  { name: 'infra', color: '#a78bfa' },
+  { name: 'frontend', color: '#60a5fa' },
+  { name: 'backend', color: '#34d399' },
+];
+const DEFAULT_PALETTE = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#fb923c', '#38bdf8'];
+
+function isValidHexColor(s) {
+  return typeof s === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s.trim());
+}
+
+function normalizeGroupEntry(raw, index) {
+  if (typeof raw === 'string') {
+    const name = raw.trim();
+    if (!name) return null;
+    return { name, color: DEFAULT_PALETTE[index % DEFAULT_PALETTE.length] };
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const name = String(raw.name ?? '').trim();
+    if (!name) return null;
+    let color = String(raw.color ?? '').trim();
+    if (!isValidHexColor(color)) {
+      color = DEFAULT_PALETTE[index % DEFAULT_PALETTE.length];
+    } else {
+      color = color.toLowerCase();
+      if (color.length === 4) {
+        color = `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+      }
+    }
+    return { name, color };
+  }
+  return null;
+}
+
+function normalizeGroupList(parsed) {
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < parsed.length; i++) {
+    const entry = normalizeGroupEntry(parsed[i], i);
+    if (!entry) continue;
+    if (seen.has(entry.name)) continue;
+    seen.add(entry.name);
+    out.push(entry);
+  }
+  return out.length ? out : null;
+}
+
+let groupList = normalizeGroupList(DEFAULT_GROUP_DEFS) || [...DEFAULT_GROUP_DEFS];
+if (fs.existsSync(groupsConfigPath)) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(groupsConfigPath, 'utf-8'));
+    const normalized = normalizeGroupList(parsed);
+    if (normalized) {
+      groupList = normalized;
+      const hadOnlyStrings =
+        Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === 'string');
+      if (hadOnlyStrings) {
+        saveGroupsConfig();
+      }
+    }
+  } catch {
+    groupList = normalizeGroupList(DEFAULT_GROUP_DEFS) || [...DEFAULT_GROUP_DEFS];
+  }
+}
+if (groupList.length === 0) {
+  groupList = [...DEFAULT_GROUP_DEFS];
+}
+
+function saveGroupsConfig() {
+  fs.writeFileSync(groupsConfigPath, JSON.stringify(groupList, null, 2) + '\n');
 }
 
 function saveConfig() {
@@ -26,6 +121,17 @@ function saveEnvConfig() {
 }
 
 const processes = new Map();
+
+// WebSocket clients per process: Map<processName, Set<WebSocket>>
+const wsClients = new Map();
+
+function broadcastPtyData(name, data) {
+  const clients = wsClients.get(name);
+  if (!clients || clients.size === 0) return;
+  for (const ws of clients) {
+    try { if (ws.readyState === 1) ws.send(data); } catch {}
+  }
+}
 
 function resolveTemplate(str) {
   if (!str) return str;
@@ -41,10 +147,29 @@ function getGitBranch(cwd) {
       cwd,
       encoding: 'utf-8',
       timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'], // suppress stderr for non-git working directories
     }).trim();
   } catch {
     return null;
   }
+}
+
+function getGitCwdForProcess(name) {
+  const config = processConfigs.find((c) => c.name === name);
+  if (!config) return null;
+  const cwd = resolveTemplate(config.cwd);
+  if (!cwd || typeof cwd !== 'string') return null;
+  const abs = path.resolve(cwd);
+  try {
+    if (!fs.existsSync(abs)) return null;
+  } catch {
+    return null;
+  }
+  return abs;
+}
+
+async function assertGitRepo(cwd) {
+  await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd, timeout: 5000 });
 }
 
 function getState(name) {
@@ -58,11 +183,51 @@ function getState(name) {
   };
 }
 
+let pty;
+try {
+  pty = require('node-pty-prebuilt-multiarch');
+} catch(e1) {
+  try {
+    pty = require('node-pty');
+  } catch(e2) {}
+}
+
+const { stripVTControlCharacters } = require('util');
+
+function cleanAnsiLog(line) {
+  // 1. Handle carriage returns properly. Take the final state in this line segment.
+  const segments = line.split('\r');
+  let text = segments[segments.length - 1];
+  
+  // 2. Strip non-color ANSI sequences (CSI sequences ending in A-L or N-Z etc.)
+  // Keep sequences ending in 'm' (SGR)
+  return text.replace(/\x1b\[[0-9;]*([A-LN-Z])/g, '');
+}
+
 function appendLog(entry, source, data) {
-  const lines = data.toString().split('\n');
+  const rawData = data.toString();
+  // Split raw stream by newline
+  const lines = rawData.split('\n');
+  
   for (const line of lines) {
     if (line.length === 0) continue;
-    entry.logs.push({ ts: Date.now(), source, text: line });
+
+    // Clean the line (handle overwrites and strip movement codes)
+    const cleanedLine = cleanAnsiLog(line);
+    const visibleText = stripVTControlCharacters(cleanedLine).trim();
+    
+    // Drop single spinner characters or empty lines that spam raw logs
+    const spinners = ['✻', '◐', '◓', '◑', '◒', '...', '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    if (spinners.includes(visibleText)) continue;
+    
+    // De-duplicate if the last log is identical (anti-spam for redraws)
+    const lastLog = entry.logs[entry.logs.length - 1];
+    if (lastLog && stripVTControlCharacters(lastLog.text).trim() === visibleText && lastLog.source === source) {
+      continue;
+    }
+    
+    // Push the line with preserved colors to Vue
+    entry.logs.push({ ts: Date.now(), source, text: cleanedLine });
     if (entry.logs.length > MAX_LOG_LINES) entry.logs.shift();
   }
 }
@@ -79,39 +244,84 @@ function startProcess(name) {
   const resolvedCwd = resolveTemplate(config.cwd);
   const resolvedArgs = (config.args || []).map(resolveTemplate);
 
-  const opts = {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...envVars },
-  };
-  if (resolvedCwd) opts.cwd = resolvedCwd;
-
-  const proc = spawn(config.command, resolvedArgs, opts);
-
+  const env = { ...process.env, PYTHONUNBUFFERED: '1', ...envVars };
+  let proc;
   const entry = {
-    proc,
     status: 'running',
-    logs: [],
+    logs: [{ ts: Date.now(), source: 'system', text: `Spawning: ${config.command} ${resolvedArgs.join(' ')}` }],
     startedAt: Date.now(),
     config,
   };
 
-  proc.stdout.on('data', (data) => appendLog(entry, 'stdout', data));
-  proc.stderr.on('data', (data) => appendLog(entry, 'stderr', data));
+  try {
+    if (pty && config.usePty) {
+      console.log(`[xpm] Spawning (pty): ${config.command} ${JSON.stringify(resolvedArgs)} cwd=${resolvedCwd || '(none)'}`);
+      proc = pty.spawn('/usr/bin/env', [config.command, ...resolvedArgs], {
+        name: 'xterm-256color',
+        cols: 100,
+        rows: 40,
+        cwd: resolvedCwd || process.cwd(),
+        env
+      });
 
-  proc.on('error', (err) => {
-    entry.status = 'errored';
-    appendLog(entry, 'system', `Process error: ${err.message}`);
-  });
+      entry.ptyProc = proc;  // Keep raw PTY ref for WebSocket resize/write
 
-  proc.on('close', (code) => {
-    if (entry.status !== 'stopping') {
-      entry.status = code === 0 ? 'stopped' : 'errored';
+      proc.onData((data) => {
+        appendLog(entry, 'stdout', data);
+        broadcastPtyData(name, data);
+      });
+
+      proc.onExit(({ exitCode }) => {
+        if (entry.status !== 'stopping') {
+          entry.status = exitCode === 0 ? 'stopped' : 'errored';
+        } else {
+          entry.status = 'stopped';
+        }
+        appendLog(entry, 'system', `Exited with code ${exitCode}`);
+        entry.proc = null;
+      });
     } else {
-      entry.status = 'stopped';
+      console.log(`[xpm] Spawning: ${config.command} ${JSON.stringify(resolvedArgs)} cwd=${resolvedCwd || '(none)'}`);
+      proc = spawn(config.command, resolvedArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: resolvedCwd || undefined,
+        env
+      });
+
+      proc.stdout.on('data', (data) => appendLog(entry, 'stdout', data));
+      proc.stderr.on('data', (data) => appendLog(entry, 'stderr', data));
+
+      proc.on('error', (err) => {
+        entry.status = 'errored';
+        appendLog(entry, 'system', `Process error: ${err.message}`);
+      });
+
+      proc.on('close', (code) => {
+        if (entry.status !== 'stopping') {
+          entry.status = code === 0 ? 'stopped' : 'errored';
+        } else {
+          entry.status = 'stopped';
+        }
+        appendLog(entry, 'system', `Exited with code ${code}`);
+        entry.proc = null;
+      });
     }
-    appendLog(entry, 'system', `Exited with code ${code}`);
-    entry.proc = null;
-  });
+  } catch (err) {
+    entry.status = 'errored';
+    appendLog(entry, 'system', `Failed to start process: ${err.message}`);
+    processes.set(name, entry);
+    return { error: err.message };
+  }
+
+  // To support both pty.js (write) and child_process.spawn (stdin.write)
+  entry.proc = {
+    stdin: proc.stdin || {
+      write: (data) => proc.write(data),
+      destroyed: false
+    },
+    pid: proc.pid,
+    kill: (signal) => proc.kill(signal)
+  };
 
   processes.set(name, entry);
   return { ok: true };
@@ -146,7 +356,10 @@ function stopProcess(name) {
   return { ok: true };
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve Vue build output from dist/, fall back to legacy public/
+const distDir = path.join(__dirname, 'dist');
+const publicDir = path.join(__dirname, 'public');
+app.use(express.static(fs.existsSync(distDir) ? distDir : publicDir));
 app.use(express.json());
 
 app.get('/api/processes', (_req, res) => {
@@ -160,6 +373,7 @@ app.get('/api/processes', (_req, res) => {
       cwd: config.cwd || null,
       resolvedCwd: resolvedCwd || null,
       branch: getGitBranch(resolvedCwd),
+      usePty: !!config.usePty,
       status: state.status,
       pid: state.pid,
       startedAt: state.startedAt,
@@ -168,11 +382,197 @@ app.get('/api/processes', (_req, res) => {
   res.json(result);
 });
 
+app.get('/api/system', (req, res) => {
+  res.json({
+    port: systemConfig.port || 1337,
+    maxLogLines: systemConfig.maxLogLines || 500,
+    logPollInterval: systemConfig.logPollInterval || 500,
+    statusPollInterval: systemConfig.statusPollInterval || 3000,
+    popoverPollInterval: systemConfig.popoverPollInterval || 1500,
+  });
+});
+
+app.get('/api/processes/:name/git/branches', async (req, res) => {
+  const cwd = getGitCwdForProcess(req.params.name);
+  if (!cwd) {
+    return res.status(404).json({ error: 'Process not found or no working directory' });
+  }
+  try {
+    await assertGitRepo(cwd);
+  } catch {
+    return res.status(400).json({ error: 'Not a git repository' });
+  }
+  try {
+    let stdout;
+    try {
+      const r = await execFileAsync(
+        'git',
+        ['branch', '-a', '--no-color', '--format=%(refname:short)'],
+        { cwd, encoding: 'utf-8', timeout: 20000, maxBuffer: 10485760 }
+      );
+      stdout = r.stdout;
+    } catch {
+      const r = await execFileAsync('git', ['branch', '-a', '--no-color'], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 20000,
+        maxBuffer: 10485760,
+      });
+      stdout = r.stdout;
+    }
+    const seen = new Set();
+    for (const line of stdout.split('\n')) {
+      let t = line.trim().replace(/^\*\s+/, '');
+      if (!t || t === 'HEAD' || t.includes('->') || t.endsWith('/HEAD')) continue;
+      seen.add(t);
+    }
+    const branches = [...seen].sort((a, b) => a.localeCompare(b));
+    let current;
+    try {
+      current = execFileSync('git', ['symbolic-ref', '-q', '--short', 'HEAD'], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+    } catch {
+      try {
+        current = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd,
+          encoding: 'utf-8',
+          timeout: 5000,
+        }).trim();
+      } catch {
+        current = null;
+      }
+    }
+    res.json({ current, branches, cwd });
+  } catch (e) {
+    res.status(500).json({ error: e.stderr || e.message || 'git branch failed' });
+  }
+});
+
+app.post('/api/processes/:name/git/fetch', async (req, res) => {
+  const cwd = getGitCwdForProcess(req.params.name);
+  if (!cwd) {
+    return res.status(404).json({ error: 'Process not found or no working directory' });
+  }
+  try {
+    await assertGitRepo(cwd);
+  } catch {
+    return res.status(400).json({ error: 'Not a git repository' });
+  }
+  try {
+    const r = await execFileAsync('git', ['fetch', '--all', '--prune'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 180000,
+      maxBuffer: 10485760,
+    });
+    res.json({ ok: true, output: (r.stdout + r.stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ error: e.stderr || e.message || 'git fetch failed' });
+  }
+});
+
+app.post('/api/processes/:name/git/pull', async (req, res) => {
+  const cwd = getGitCwdForProcess(req.params.name);
+  if (!cwd) {
+    return res.status(404).json({ error: 'Process not found or no working directory' });
+  }
+  try {
+    await assertGitRepo(cwd);
+  } catch {
+    return res.status(400).json({ error: 'Not a git repository' });
+  }
+  try {
+    const r = await execFileAsync('git', ['pull', '--ff-only'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 180000,
+      maxBuffer: 10485760,
+    });
+    res.json({ ok: true, output: (r.stdout + r.stderr).trim() });
+  } catch (e) {
+    res.status(500).json({ error: e.stderr || e.message || 'git pull failed' });
+  }
+});
+
+app.post('/api/processes/:name/git/checkout', async (req, res) => {
+  const branch = String(req.body?.branch ?? '').trim();
+  if (!branch) {
+    return res.status(400).json({ error: 'branch is required' });
+  }
+  const cwd = getGitCwdForProcess(req.params.name);
+  if (!cwd) {
+    return res.status(404).json({ error: 'Process not found or no working directory' });
+  }
+  try {
+    await assertGitRepo(cwd);
+  } catch {
+    return res.status(400).json({ error: 'Not a git repository' });
+  }
+  try {
+    let out = '';
+    try {
+      const r = await execFileAsync('git', ['switch', branch], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 120000,
+        maxBuffer: 10485760,
+      });
+      out = (r.stdout + r.stderr).trim();
+    } catch {
+      const r = await execFileAsync('git', ['checkout', branch], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 120000,
+        maxBuffer: 10485760,
+      });
+      out = (r.stdout + r.stderr).trim();
+    }
+    let current;
+    try {
+      current = execFileSync('git', ['symbolic-ref', '-q', '--short', 'HEAD'], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+    } catch {
+      current = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd,
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+    }
+    res.json({ ok: true, current, output: out });
+  } catch (e) {
+    res.status(400).json({ error: (e.stderr || e.message || 'checkout failed').trim() });
+  }
+});
+
 app.get('/api/processes/:name/logs', (req, res) => {
   const since = parseInt(req.query.since) || 0;
   const state = getState(req.params.name);
   const logs = state.logs.filter((l) => l.ts > since);
   res.json(logs);
+});
+
+app.use(express.text());
+
+app.post('/api/processes/:name/stdin', (req, res) => {
+  const name = req.params.name;
+  const entry = processes.get(name);
+  if (!entry || entry.status !== 'running' || !entry.proc) {
+    return res.status(400).json({ error: `${name} is not running` });
+  }
+  if (!entry.proc.stdin || entry.proc.stdin.destroyed) {
+    return res.status(400).json({ error: `${name} stdin is not available` });
+  }
+  const input = req.body.input !== undefined ? req.body.input : (typeof req.body === 'string' ? req.body : '');
+  // Send exactly \r (Return key payload) because Raw mode drops \n and \r\n can confuse TUI prompts
+  entry.proc.stdin.write(input + '\r');
+  appendLog(entry, 'stdin', input);
+  res.json({ ok: true });
 });
 
 app.post('/api/processes/:name/start', (req, res) => {
@@ -242,6 +642,7 @@ app.post('/api/config/import', (req, res) => {
     const entry = { name: item.name, command: item.command, args: item.args || [], group: item.group || 'other' };
     if (item.cwd) entry.cwd = item.cwd;
     if (item.stopCommand) entry.stopCommand = item.stopCommand;
+    if (item.usePty !== undefined) entry.usePty = !!item.usePty;
     processConfigs.push(entry);
     added.push(item.name);
   }
@@ -250,7 +651,7 @@ app.post('/api/config/import', (req, res) => {
 });
 
 app.post('/api/config', (req, res) => {
-  const { name, command, args, cwd, group, stopCommand } = req.body;
+  const { name, command, args, cwd, group, stopCommand, usePty } = req.body;
   if (!name || !command) {
     return res.status(400).json({ error: 'name and command are required' });
   }
@@ -260,6 +661,7 @@ app.post('/api/config', (req, res) => {
   const entry = { name, command, args: args || [], group: group || 'other' };
   if (cwd) entry.cwd = cwd;
   if (stopCommand) entry.stopCommand = stopCommand;
+  if (usePty !== undefined) entry.usePty = !!usePty;
   processConfigs.push(entry);
   saveConfig();
   res.json({ ok: true });
@@ -279,7 +681,7 @@ app.put('/api/config/:name', (req, res) => {
   if (idx === -1) {
     return res.status(404).json({ error: `Process "${oldName}" not found` });
   }
-  const { name: newName, command, args, cwd, group, stopCommand } = req.body;
+  const { name: newName, command, args, cwd, group, stopCommand, usePty } = req.body;
   if (!command) {
     return res.status(400).json({ error: 'command is required' });
   }
@@ -290,6 +692,7 @@ app.put('/api/config/:name', (req, res) => {
   const updated = { name: finalName, command, args: args || [], group: group || 'other' };
   if (cwd) updated.cwd = cwd;
   if (stopCommand) updated.stopCommand = stopCommand;
+  if (usePty !== undefined) updated.usePty = !!usePty;
   processConfigs[idx] = updated;
   saveConfig();
 
@@ -334,6 +737,116 @@ app.put('/api/env', (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
+app.put('/api/system', (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return res.status(400).json({ error: 'Body must be a JSON object' });
+  }
+  const allowed = ['port', 'maxLogLines', 'logPollInterval', 'statusPollInterval', 'popoverPollInterval'];
+  for (const key of allowed) {
+    if (body[key] !== undefined) systemConfig[key] = body[key];
+  }
+  fs.writeFileSync(systemConfigPath, JSON.stringify(systemConfig, null, 2) + '\n');
+  res.json({ ok: true, note: 'Restart server for port/maxLogLines changes to take effect' });
+});
+
+app.get('/api/groups', (_req, res) => {
+  res.json(groupList);
+});
+
+app.put('/api/groups', (req, res) => {
+  const body = req.body;
+  if (!Array.isArray(body)) {
+    return res.status(400).json({ error: 'Body must be a JSON array of { name, color } objects' });
+  }
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < body.length; i++) {
+    const raw = body[i];
+    let name;
+    let color;
+    if (typeof raw === 'string') {
+      name = raw.trim();
+      color = DEFAULT_PALETTE[out.length % DEFAULT_PALETTE.length];
+    } else if (raw && typeof raw === 'object') {
+      name = String(raw.name ?? '').trim();
+      color = String(raw.color ?? '').trim();
+      if (!isValidHexColor(color)) {
+        return res.status(400).json({ error: `Invalid color for group "${name || '(unnamed)'}" (use #RGB or #RRGGBB)` });
+      }
+      color = color.toLowerCase();
+      if (color.length === 4) {
+        color = `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+      }
+    } else {
+      continue;
+    }
+    if (!name) continue;
+    if (seen.has(name)) {
+      return res.status(400).json({ error: `Duplicate group name: "${name}"` });
+    }
+    seen.add(name);
+    out.push({ name, color });
+  }
+  if (out.length === 0) {
+    return res.status(400).json({ error: 'At least one group is required' });
+  }
+  groupList = out;
+  saveGroupsConfig();
+  res.json({ ok: true });
+});
+
+// ── HTTP + WebSocket Server ─────────────────
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws/terminal' });
+
+wss.on('connection', (ws, req) => {
+  // Extract process name from query: /ws/terminal?name=<processName>
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const name = url.searchParams.get('name');
+  if (!name) { ws.close(1008, 'Missing name param'); return; }
+
+  const entry = processes.get(name);
+  if (!entry || !entry.ptyProc) { ws.close(1008, 'Not a PTY process'); return; }
+
+  // Register client
+  if (!wsClients.has(name)) wsClients.set(name, new Set());
+  wsClients.get(name).add(ws);
+
+  ws.on('error', () => {});  // Prevent unhandled error crashes
+
+  // Send buffered log text as a single batch so the terminal isn't blank on connect
+  if (entry.logs.length && ws.readyState === 1) {
+    try {
+      const batch = entry.logs.filter(l => l.source === 'stdout').map(l => l.text).join('');
+      ws.send(batch);
+    } catch {}
+  }
+
+  // Client → PTY (keyboard input + resize)
+  ws.on('message', (msg) => {
+    if (!entry.ptyProc) return;
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed.type === 'resize') {
+        entry.ptyProc.resize(
+          Math.min(parsed.cols, 300),
+          Math.min(parsed.rows, 100)
+        );
+      } else if (parsed.type === 'input') {
+        entry.ptyProc.write(parsed.data);
+      }
+    } catch {
+      entry.ptyProc.write(msg.toString());
+    }
+  });
+
+  ws.on('close', () => {
+    const set = wsClients.get(name);
+    if (set) { set.delete(ws); if (set.size === 0) wsClients.delete(name); }
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`xprocessmanager running at http://localhost:${PORT}`);
 });
