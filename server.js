@@ -1,7 +1,5 @@
 const express = require('express');
-const { spawn, execFileSync, execFile } = require('child_process');
-const util = require('util');
-const execFileAsync = util.promisify(execFile);
+const { spawn, execFileSync } = require('child_process');
 const kill = require('tree-kill');
 const path = require('path');
 const fs = require('fs');
@@ -152,24 +150,6 @@ function getGitBranch(cwd) {
   } catch {
     return null;
   }
-}
-
-function getGitCwdForProcess(name) {
-  const config = processConfigs.find((c) => c.name === name);
-  if (!config) return null;
-  const cwd = resolveTemplate(config.cwd);
-  if (!cwd || typeof cwd !== 'string') return null;
-  const abs = path.resolve(cwd);
-  try {
-    if (!fs.existsSync(abs)) return null;
-  } catch {
-    return null;
-  }
-  return abs;
-}
-
-async function assertGitRepo(cwd) {
-  await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd, timeout: 5000 });
 }
 
 function getState(name) {
@@ -390,164 +370,6 @@ app.get('/api/system', (req, res) => {
     statusPollInterval: systemConfig.statusPollInterval || 3000,
     popoverPollInterval: systemConfig.popoverPollInterval || 1500,
   });
-});
-
-app.get('/api/processes/:name/git/branches', async (req, res) => {
-  const cwd = getGitCwdForProcess(req.params.name);
-  if (!cwd) {
-    return res.status(404).json({ error: 'Process not found or no working directory' });
-  }
-  try {
-    await assertGitRepo(cwd);
-  } catch {
-    return res.status(400).json({ error: 'Not a git repository' });
-  }
-  try {
-    let stdout;
-    try {
-      const r = await execFileAsync(
-        'git',
-        ['branch', '-a', '--no-color', '--format=%(refname:short)'],
-        { cwd, encoding: 'utf-8', timeout: 20000, maxBuffer: 10485760 }
-      );
-      stdout = r.stdout;
-    } catch {
-      const r = await execFileAsync('git', ['branch', '-a', '--no-color'], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 20000,
-        maxBuffer: 10485760,
-      });
-      stdout = r.stdout;
-    }
-    const seen = new Set();
-    for (const line of stdout.split('\n')) {
-      let t = line.trim().replace(/^\*\s+/, '');
-      if (!t || t === 'HEAD' || t.includes('->') || t.endsWith('/HEAD')) continue;
-      seen.add(t);
-    }
-    const branches = [...seen].sort((a, b) => a.localeCompare(b));
-    let current;
-    try {
-      current = execFileSync('git', ['symbolic-ref', '-q', '--short', 'HEAD'], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-    } catch {
-      try {
-        current = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd,
-          encoding: 'utf-8',
-          timeout: 5000,
-        }).trim();
-      } catch {
-        current = null;
-      }
-    }
-    res.json({ current, branches, cwd });
-  } catch (e) {
-    res.status(500).json({ error: e.stderr || e.message || 'git branch failed' });
-  }
-});
-
-app.post('/api/processes/:name/git/fetch', async (req, res) => {
-  const cwd = getGitCwdForProcess(req.params.name);
-  if (!cwd) {
-    return res.status(404).json({ error: 'Process not found or no working directory' });
-  }
-  try {
-    await assertGitRepo(cwd);
-  } catch {
-    return res.status(400).json({ error: 'Not a git repository' });
-  }
-  try {
-    const r = await execFileAsync('git', ['fetch', '--all', '--prune'], {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 180000,
-      maxBuffer: 10485760,
-    });
-    res.json({ ok: true, output: (r.stdout + r.stderr).trim() });
-  } catch (e) {
-    res.status(500).json({ error: e.stderr || e.message || 'git fetch failed' });
-  }
-});
-
-app.post('/api/processes/:name/git/pull', async (req, res) => {
-  const cwd = getGitCwdForProcess(req.params.name);
-  if (!cwd) {
-    return res.status(404).json({ error: 'Process not found or no working directory' });
-  }
-  try {
-    await assertGitRepo(cwd);
-  } catch {
-    return res.status(400).json({ error: 'Not a git repository' });
-  }
-  try {
-    const r = await execFileAsync('git', ['pull', '--ff-only'], {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 180000,
-      maxBuffer: 10485760,
-    });
-    res.json({ ok: true, output: (r.stdout + r.stderr).trim() });
-  } catch (e) {
-    res.status(500).json({ error: e.stderr || e.message || 'git pull failed' });
-  }
-});
-
-app.post('/api/processes/:name/git/checkout', async (req, res) => {
-  const branch = String(req.body?.branch ?? '').trim();
-  if (!branch) {
-    return res.status(400).json({ error: 'branch is required' });
-  }
-  const cwd = getGitCwdForProcess(req.params.name);
-  if (!cwd) {
-    return res.status(404).json({ error: 'Process not found or no working directory' });
-  }
-  try {
-    await assertGitRepo(cwd);
-  } catch {
-    return res.status(400).json({ error: 'Not a git repository' });
-  }
-  try {
-    let out = '';
-    try {
-      const r = await execFileAsync('git', ['switch', branch], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 120000,
-        maxBuffer: 10485760,
-      });
-      out = (r.stdout + r.stderr).trim();
-    } catch {
-      const r = await execFileAsync('git', ['checkout', branch], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 120000,
-        maxBuffer: 10485760,
-      });
-      out = (r.stdout + r.stderr).trim();
-    }
-    let current;
-    try {
-      current = execFileSync('git', ['symbolic-ref', '-q', '--short', 'HEAD'], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-    } catch {
-      current = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-    }
-    res.json({ ok: true, current, output: out });
-  } catch (e) {
-    res.status(400).json({ error: (e.stderr || e.message || 'checkout failed').trim() });
-  }
 });
 
 app.get('/api/processes/:name/logs', (req, res) => {
