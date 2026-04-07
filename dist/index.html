@@ -138,6 +138,41 @@
       font-size: 11px;
       font-family: 'SF Mono', 'Fira Code', monospace;
       color: var(--purple);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .branch-tag:hover {
+      border-color: var(--purple);
+      background: #2e2640;
+    }
+
+    .branch-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 4px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .branch-item:hover {
+      background: var(--surface2);
+    }
+    .branch-item.current {
+      color: var(--green);
+      font-weight: 600;
+      background: rgba(52, 211, 153, 0.1);
+    }
+    .branch-item.current::before {
+      content: '✓ ';
+    }
+    .branch-list-container {
+      max-height: 250px;
+      overflow-y: auto;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px;
+      background: var(--bg);
     }
 
     .card-actions {
@@ -452,6 +487,19 @@
     </div>
   </div>
 
+  <div class="modal-overlay hidden" id="branchModal" onclick="if(event.target===this)closeBranchModal()">
+    <div class="modal">
+      <h2 id="branchModalTitle">Select Branch</h2>
+      <div class="form-group">
+        <input type="text" id="branchFilter" placeholder="Filter branches..." oninput="filterBranches()" />
+      </div>
+      <div class="branch-list-container" id="branchList"></div>
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeBranchModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let selectedProcess = null;
     let logSince = 0;
@@ -694,7 +742,7 @@
               <div class="card-meta">
                 <span>PID: ${p.pid || '-'}</span>
                 <span>Uptime: ${uptime}</span>
-                ${p.branch ? `<span class="branch-tag">${p.branch}</span>` : ''}
+                ${p.branch ? `<span class="branch-tag" onclick="event.stopPropagation();openBranchModal('${p.name}')">${p.branch}</span>` : ''}
               </div>
             </div>`;
         }
@@ -794,6 +842,73 @@
       document.addEventListener('touchmove', onMove);
       document.addEventListener('touchend', onEnd);
     });
+
+    let branchModalProcess = null;
+    let allBranches = [];
+    let currentBranch = null;
+
+    async function openBranchModal(name) {
+      branchModalProcess = name;
+      document.getElementById('branchModalTitle').textContent = `Checkout Branch — ${name}`;
+      document.getElementById('branchFilter').value = '';
+      document.getElementById('branchList').innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:13px;text-align:center;">Loading branches...</div>';
+      document.getElementById('branchModal').classList.remove('hidden');
+      
+      const res = await api(`/api/processes/${name}/git/branches`);
+      if (res.error) {
+        document.getElementById('branchList').innerHTML = `<div style="padding:12px;color:var(--red);font-size:13px;">${escHtml(res.error)}</div>`;
+        return;
+      }
+      
+      allBranches = res.branches || [];
+      currentBranch = res.current;
+      renderBranchList(allBranches);
+      setTimeout(() => document.getElementById('branchFilter').focus(), 50);
+    }
+
+    function closeBranchModal() {
+      document.getElementById('branchModal').classList.add('hidden');
+      branchModalProcess = null;
+    }
+
+    function filterBranches() {
+      const q = document.getElementById('branchFilter').value.toLowerCase();
+      const filtered = allBranches.filter(b => b.toLowerCase().includes(q));
+      renderBranchList(filtered);
+    }
+
+    function renderBranchList(branches) {
+      const container = document.getElementById('branchList');
+      if (!branches.length) {
+        container.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:13px;text-align:center;">No branches found</div>';
+        return;
+      }
+      
+      let html = '';
+      for (const b of branches) {
+        const isCurrent = b === currentBranch;
+        html += `<div class="branch-item ${isCurrent ? 'current' : ''}" onclick="checkoutBranch('${b}')">${escHtml(b)}</div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    async function checkoutBranch(branch) {
+      if (!branchModalProcess) return;
+      if (branch === currentBranch) {
+        closeBranchModal();
+        return;
+      }
+      const processName = branchModalProcess;
+      document.getElementById('branchList').innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:13px;text-align:center;">Checking out...</div>';
+      const res = await api(`/api/processes/${processName}/git/checkout`, 'POST', { branch });
+      if (res.error) {
+        alert(res.error);
+        closeBranchModal();
+        return;
+      }
+      closeBranchModal();
+      refresh(true);
+    }
 
     refresh();
     setInterval(refresh, 3000);

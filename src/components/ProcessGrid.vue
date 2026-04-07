@@ -22,6 +22,7 @@
           @edit="$emit('edit', $event)"
           @hover-enter="(name, el) => $emit('hover-enter', name, el)"
           @hover-leave="$emit('hover-leave')"
+          @branch-click="$emit('branch-click', $event)"
         />
       </div>
     </template>
@@ -39,7 +40,7 @@ const props = defineProps({
   viewMode: { type: String, default: 'group' },
 })
 
-const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'reorder'])
+const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'reorder', 'branch-click'])
 
 // ── Drag and Drop ──────────────────────────
 const dragName = ref(null)

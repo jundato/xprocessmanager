@@ -151,6 +151,41 @@ button:active { opacity: 0.7; }
   font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', monospace;
   color: var(--purple);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.branch-tag:hover {
+  border-color: var(--purple);
+  background: #2e2640;
+}
+
+.branch-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.branch-item:hover {
+  background: var(--surface2);
+}
+.branch-item.current {
+  color: var(--green);
+  font-weight: 600;
+  background: rgba(52, 211, 153, 0.1);
+}
+.branch-item.current::before {
+  content: '✓ ';
+}
+.branch-list-container {
+  max-height: 250px;
+  overflow-y: auto;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  background: var(--bg);
 }
 
 .card-actions { display: flex; gap: 4px; }

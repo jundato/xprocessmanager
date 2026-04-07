@@ -43,6 +43,7 @@
       @hover-enter="popoverStore.onCardHoverEnter"
       @hover-leave="popoverStore.onCardHoverLeave"
       @reorder="handleReorder"
+      @branch-click="openBranchModal"
     />
   </div>
 
@@ -88,6 +89,17 @@
     @remove="handleProcessRemove"
   />
 
+  <BranchModal
+    :show="branchModalStore.show"
+    :process-name="branchModalStore.processName"
+    :branches="branchModalStore.branches"
+    :current-branch="branchModalStore.currentBranch"
+    :loading="branchModalStore.loading"
+    :error="branchModalStore.error"
+    @close="closeBranchModal"
+    @checkout="handleCheckoutBranch"
+  />
+
   </div>
 
   <SettingsModal
@@ -119,6 +131,7 @@ import LogPanel from './components/LogPanel.vue'
 import LogPopover from './components/LogPopover.vue'
 import ProcessModal from './components/ProcessModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
+import BranchModal from './components/BranchModal.vue'
 
 import { useProcesses } from './composables/useProcesses.js'
 import { useLogs } from './composables/useLogs.js'
@@ -254,6 +267,54 @@ async function handleStop(name) {
 
 async function handleRestart(name) {
   await processStore.restartProcess(name)
+}
+
+// ── Branch Modal ────────────────────────────
+import { reactive } from 'vue'
+const branchModalStore = reactive({
+  show: false,
+  processName: null,
+  branches: [],
+  currentBranch: null,
+  loading: false,
+  error: null
+})
+
+async function openBranchModal(name) {
+  branchModalStore.processName = name
+  branchModalStore.branches = []
+  branchModalStore.currentBranch = null
+  branchModalStore.error = null
+  branchModalStore.loading = true
+  branchModalStore.show = true
+  
+  const res = await api(`/api/processes/${name}/git/branches`)
+  branchModalStore.loading = false
+  if (res.error) {
+    branchModalStore.error = res.error
+    return
+  }
+  branchModalStore.branches = res.branches || []
+  branchModalStore.currentBranch = res.current
+}
+
+function closeBranchModal() {
+  branchModalStore.show = false
+  branchModalStore.processName = null
+}
+
+async function handleCheckoutBranch(branch) {
+  if (!branchModalStore.processName) return
+  const name = branchModalStore.processName
+  branchModalStore.loading = true
+  const res = await api(`/api/processes/${name}/git/checkout`, 'POST', { branch })
+  branchModalStore.loading = false
+  if (res.error) {
+    alert(res.error)
+    return
+  }
+  closeBranchModal()
+  await processStore.refresh(true)
 }
 
 // ── Logs ────────────────────────────────────

@@ -5,14 +5,15 @@ export default defineConfig({
   plugins: [vue()],
   publicDir: false,
   server: {
-    port: 1337,
+    port: 1338,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:1338',
+        target: 'http://127.0.0.1:1337',
         changeOrigin: true,
       },
       '/ws/terminal': {
-        target: 'http://localhost:1338',
+        target: 'http://127.0.0.1:1337',
         ws: true,
         changeOrigin: true,
         on: {

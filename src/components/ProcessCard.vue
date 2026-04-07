@@ -41,7 +41,7 @@
     <div class="card-meta">
       <span>PID: {{ process.pid || '-' }}</span>
       <span>Uptime: {{ uptime }}</span>
-      <span v-if="process.branch" class="branch-tag">{{ process.branch }}</span>
+      <span v-if="process.branch" class="branch-tag" @click.stop="$emit('branch-click', process.name)">{{ process.branch }}</span>
     </div>
 
     <!-- Inline Log Tray -->
@@ -99,7 +99,7 @@ const props = defineProps({
   isSelected: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave'])
+const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'branch-click'])
 
 const expanded = ref(false)
 const cardLogs = ref([])
