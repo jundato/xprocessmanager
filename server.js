@@ -471,6 +471,61 @@ app.post('/api/processes/:name/git/checkout', async (req, res) => {
   }
 });
 
+app.post('/api/processes/:name/git/remote-status', async (req, res) => {
+  const name = req.params.name;
+  const config = processConfigs.find(c => c.name === name);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+  
+  const resolvedCwd = resolveTemplate(config.cwd);
+  try {
+    // 1. Fetch
+    try {
+      execFileSync('git', ['fetch'], { cwd: resolvedCwd, timeout: 15000 });
+    } catch (e) {
+      // If fetch fails (no remote, network issues), we still try to compare with existing tracking info
+    }
+    
+    // 2. Compare
+    const local = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolvedCwd, encoding: 'utf-8' }).trim();
+    let remote;
+    try {
+      remote = execFileSync('git', ['rev-parse', '@{u}'], { cwd: resolvedCwd, encoding: 'utf-8' }).trim();
+    } catch {
+      return res.json({ status: 'no-remote' });
+    }
+    
+    if (local === remote) {
+      return res.json({ status: 'up-to-date' });
+    }
+    
+    const base = execFileSync('git', ['merge-base', 'HEAD', '@{u}'], { cwd: resolvedCwd, encoding: 'utf-8' }).trim();
+    
+    if (local === base) {
+      return res.json({ status: 'behind' });
+    } else if (remote === base) {
+      return res.json({ status: 'ahead' });
+    } else {
+      return res.json({ status: 'diverged' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: `Git status check failed: ${err.message}` });
+  }
+});
+
+app.post('/api/processes/:name/git/pull', async (req, res) => {
+  const name = req.params.name;
+  const config = processConfigs.find(c => c.name === name);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+  
+  const resolvedCwd = resolveTemplate(config.cwd);
+  try {
+    execFileSync('git', ['pull'], { cwd: resolvedCwd, timeout: 30000 });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: `Git pull failed: ${err.message}` });
+  }
+});
+
 app.post('/api/start-all', (_req, res) => {
   const results = {};
   for (const config of processConfigs) {

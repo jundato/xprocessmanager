@@ -1,14 +1,11 @@
 <template>
-  <div :class="{ compact: compactMode }">
   <AppHeader
     :counts="counts"
     :total="processStore.processes.value.length"
-    :compact="compactMode"
     @add-process="openAddModal"
     @start-all="processStore.startAll"
     @stop-all="processStore.stopAll"
     @open-settings="settingsStore.openSettings"
-    @toggle-compact="toggleCompact"
   />
 
   <div class="floating-toolbar" :style="{ bottom: logStore.selectedProcess.value ? (logStore.logPanelHeight.value + 16) + 'px' : '' }">
@@ -100,7 +97,9 @@
     @checkout="handleCheckoutBranch"
   />
 
-  </div>
+  <AlertModal />
+
+
 
   <SettingsModal
     :show="settingsStore.showSettingsModal.value"
@@ -132,26 +131,23 @@ import LogPopover from './components/LogPopover.vue'
 import ProcessModal from './components/ProcessModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
+import AlertModal from './components/AlertModal.vue'
 
 import { useProcesses } from './composables/useProcesses.js'
 import { useLogs } from './composables/useLogs.js'
 import { usePopover } from './composables/usePopover.js'
 import { useSettings } from './composables/useSettings.js'
+import { useAlert } from './composables/useAlert.js'
 import { api } from './composables/useApi.js'
 
-// ── Compact Mode ───────────────────────────
-const compactMode = ref(localStorage.getItem('xpm-compact') === '1')
 
-function toggleCompact() {
-  compactMode.value = !compactMode.value
-  localStorage.setItem('xpm-compact', compactMode.value ? '1' : '0')
-}
 
 // ── Stores ──────────────────────────────────
 const processStore = useProcesses()
 const logStore = useLogs()
 const popoverStore = usePopover()
 const settingsStore = useSettings()
+const { showAlert } = useAlert()
 
 // ── Computed ────────────────────────────────
 const selectedIsPty = computed(() => {
@@ -310,7 +306,7 @@ async function handleCheckoutBranch(branch) {
   const res = await api(`/api/processes/${name}/git/checkout`, 'POST', { branch })
   branchModalStore.loading = false
   if (res.error) {
-    alert(res.error)
+    showAlert('Branch Error', res.error)
     return
   }
   closeBranchModal()

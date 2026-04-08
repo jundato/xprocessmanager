@@ -10,18 +10,7 @@
       </div>
     </div>
     <div class="header-actions">
-      <button
-        class="btn-ghost btn-compact-toggle"
-        :class="{ active: compact }"
-        @click="$emit('toggle-compact')"
-        title="Toggle compact mode"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="3" y1="6" x2="21" y2="6"/>
-          <line x1="3" y1="12" x2="21" y2="12"/>
-          <line x1="3" y1="18" x2="21" y2="18"/>
-        </svg>
-      </button>
+
       <button class="btn-ghost" @click="$emit('add-process')">
         <i class="fa-solid fa-plus mr-1"></i> Add Process
       </button>
@@ -51,8 +40,7 @@
 defineProps({
   counts: { type: Object, required: true },
   total: { type: Number, required: true },
-  compact: { type: Boolean, default: false },
 })
 
-defineEmits(['add-process', 'start-all', 'stop-all', 'open-settings', 'toggle-compact'])
+defineEmits(['add-process', 'start-all', 'stop-all', 'open-settings'])
 </script>
