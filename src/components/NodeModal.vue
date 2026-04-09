@@ -1,20 +1,38 @@
 <template>
-  <div v-if="show" class="modal-overlay" @click.self="$emit('close')">
+  <div v-if="show" class="modal-overlay" @mousedown.self="overlayMouseDown = true" @click.self="handleOverlayClick">
     <div class="modal">
-      <h2>{{ isEditing ? `Edit — ${editingName}` : 'Add Process' }}</h2>
+      <h2>{{ isEditing ? `Edit — ${editingName}` : 'Add Node' }}</h2>
+      <div class="form-group">
+        <label>Type</label>
+        <div class="node-type-toggle">
+          <button
+            v-for="t in nodeTypes"
+            :key="t.value"
+            type="button"
+            class="node-type-btn"
+            :class="{ active: form.type === t.value }"
+            @click="form.type = t.value"
+          >
+            <i :class="t.icon"></i>
+            <span>{{ t.label }}</span>
+          </button>
+        </div>
+      </div>
       <div class="form-group">
         <label>Name</label>
         <input v-model="form.name" type="text" placeholder="my-service" />
       </div>
-      <div class="form-group">
-        <label>Command</label>
-        <input v-model="form.command" type="text" placeholder="pwsh, node, docker, npm..." />
-      </div>
-      <div class="form-group">
-        <label>Arguments</label>
-        <input v-model="form.argsRaw" type="text" placeholder="start_server.ps1  (space-separated)" />
-        <div class="hint">Space-separated. Quote paths with spaces: "path/with spaces/file.sh". Supports {ENV_KEY} templates</div>
-      </div>
+      <template v-if="form.type !== 'desk'">
+        <div class="form-group">
+          <label>Command</label>
+          <input v-model="form.command" type="text" placeholder="pwsh, node, docker, npm..." />
+        </div>
+        <div class="form-group">
+          <label>Arguments</label>
+          <input v-model="form.argsRaw" type="text" placeholder="start_server.ps1  (space-separated)" />
+          <div class="hint">Space-separated. Quote paths with spaces: "path/with spaces/file.sh". Supports {ENV_KEY} templates</div>
+        </div>
+      </template>
       <div class="form-group">
         <label>Working Directory</label>
         <div style="display: flex; gap: 6px;">
@@ -38,16 +56,9 @@
           <option v-for="g in groupNames" :key="g" :value="g">{{ g }}</option>
         </select>
       </div>
-      <div class="form-group checkbox-group" style="display: flex; align-items: center; gap: 8px; margin-top: 16px;">
-        <input v-model="form.usePty" type="checkbox" id="usePty" style="width: auto" />
-        <label for="usePty" style="margin: 0; cursor: pointer;">Run in Interactive Terminal (TTY)</label>
-      </div>
-      <div class="hint" style="margin-top: -6px; margin-bottom: 12px; margin-left: 24px;">
-        Check this for interactive tools like <code>claude</code> that require a real terminal.
-      </div>
       <div class="modal-actions" style="justify-content: space-between">
         <div v-if="isEditing">
-          <button class="btn-delete" @click="handleRemove">Remove Process</button>
+          <button class="btn-delete" @click="handleRemove">Remove Node</button>
         </div>
         <div style="display: flex; gap: 8px; margin-left: auto">
           <button class="btn-ghost" @click="$emit('close')">Cancel</button>
@@ -66,20 +77,38 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   editingName: { type: String, default: null },
   groupNames: { type: Array, default: () => ['other'] },
-  processes: { type: Array, default: () => [] },
+  nodes: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['close', 'submit', 'remove'])
 
+const overlayMouseDown = ref(false)
+function handleOverlayClick() {
+  if (overlayMouseDown.value) emit('close')
+  overlayMouseDown.value = false
+}
+
 const isEditing = computed(() => !!props.editingName)
+
+const nodeTypes = [
+  { value: 'service', label: 'Service', icon: 'fa-solid fa-server' },
+  { value: 'agent', label: 'Agent', icon: 'fa-solid fa-robot' },
+  { value: 'desk', label: 'Desk', icon: 'fa-solid fa-desktop' },
+  { value: 'script', label: 'Script', icon: 'fa-solid fa-scroll' },
+]
 
 const form = reactive({
   name: '',
   command: '',
   argsRaw: '',
   cwd: '',
+  type: 'service',
   group: 'other',
   usePty: false,
+})
+
+watch(() => form.type, (type) => {
+  form.usePty = type === 'agent'
 })
 
 const resolvedCwd = ref(null)
@@ -112,14 +141,16 @@ watch(() => props.show, async (val) => {
     form.command = config.command || ''
     form.argsRaw = (config.args || []).join(' ')
     form.cwd = config.cwd || ''
+    form.type = config.type || 'service'
     form.group = config.group || props.groupNames[0] || 'other'
-    form.usePty = !!config.usePty
+    form.usePty = config.type === 'agent' ? true : !!config.usePty
     resolvedCwd.value = proc?.resolvedCwd || null
   } else {
     form.name = ''
     form.command = ''
     form.argsRaw = ''
     form.cwd = ''
+    form.type = 'service'
     form.group = props.groupNames[0] || 'other'
     form.usePty = false
   }
@@ -135,13 +166,14 @@ function handleSubmit() {
   const name = form.name.trim()
   const command = form.command.trim()
   if (!name) return alert('Name is required.')
-  if (!command) return alert('Command is required.')
+  if (!['desk'].includes(form.type) && !command) return alert('Command is required.')
 
   const data = {
     name,
-    command,
+    command: command || undefined,
     args: parseArgs(form.argsRaw.trim()),
     cwd: form.cwd.trim() || undefined,
+    type: form.type,
     group: form.group,
     usePty: form.usePty,
   }
