@@ -3,7 +3,7 @@
     class="card"
     :class="{ selected: isSelected, expanded }"
     :style="{ borderColor, '--card-color': borderColor }"
-    @click="toggleExpand"
+    @click="$emit('select', process.name)"
     @mouseenter="!expanded && $emit('hover-enter', process.name, $event.currentTarget)"
     @mouseleave="!expanded && $emit('hover-leave')"
   >
@@ -57,7 +57,7 @@
     <!-- Inline Log Tray -->
     <div v-if="expanded" class="card-log-tray" @click.stop>
       <!-- xterm.js for PTY processes -->
-      <div v-if="process.usePty" ref="xtermContainerRef" class="card-xterm-container"></div>
+      <div v-if="process.usePty" ref="xtermContainerRef" class="card-xterm-container" @click="focusTerminal"></div>
 
       <!-- HTML logs for non-PTY processes -->
       <div v-if="!process.usePty" ref="logTrayBody" class="card-log-body">
@@ -71,33 +71,20 @@
         <div v-if="!cardLogs.length" class="card-log-empty">No logs yet.</div>
       </div>
 
-      <div v-if="process.usePty" class="stdin-input-row">
-        <input
-          v-model="stdinInput"
-          type="text"
-          class="stdin-input"
-          placeholder="Send input to process…"
-          @keydown.enter="sendStdin"
-          :disabled="process.status !== 'running'"
-        />
-        <button
-          class="btn-stdin-send"
-          @click="sendStdin"
-          :disabled="process.status !== 'running'"
-        >Send</button>
-      </div>
     </div>
 
-    <!-- Bottom Expand Indicator -->
-    <div
+    <!-- Bottom Expand Button -->
+    <button
       class="card-expand-indicator"
       :class="{ active: expanded }"
       :style="{ borderColor, color: expanded ? borderColor : '' }"
+      @click.stop="toggleExpand"
+      :title="expanded ? 'Collapse' : 'Expand'"
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline :points="expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'"/>
       </svg>
-    </div>
+    </button>
   </div>
 </template>
 
@@ -130,7 +117,6 @@ const gitRemoteStatus = ref(null)
 const cardLogs = ref([])
 const logTrayBody = ref(null)
 const xtermContainerRef = ref(null)
-const stdinInput = ref('')
 let logSince = 0
 let pollTimer = null
 
@@ -222,23 +208,37 @@ function fitWide() {
   }
 }
 
+function focusTerminal() {
+  if (term) term.focus()
+}
+
 function destroyCardTerminal() {
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
   if (term) { term.dispose(); term = null; fitAddon = null }
 }
 
+let wsRetryTimer = null
+
 function connectWs(name) {
   disconnectWs()
-  if (!name) return
+  if (!name || !expanded.value) return
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   ws = new WebSocket(url)
+  ws.onopen = () => { if (term) term.focus() }
   ws.onmessage = (ev) => { if (term) term.write(ev.data) }
-  ws.onclose = () => { ws = null }
-  ws.onerror = () => { ws = null }
+  ws.onclose = () => {
+    ws = null
+    // Retry connection if still expanded (process may not be ready yet)
+    if (expanded.value) {
+      wsRetryTimer = setTimeout(() => connectWs(name), 1500)
+    }
+  }
+  ws.onerror = () => {}
 }
 
 function disconnectWs() {
+  if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null }
   if (ws) { ws.close(); ws = null }
 }
 
@@ -279,7 +279,6 @@ function stopPolling() {
 
 // ── Expand / Collapse ──────────────────────
 async function toggleExpand() {
-  emit('select', props.process.name)
   emit('hover-leave')
   expanded.value = !expanded.value
   if (expanded.value) {
@@ -297,20 +296,6 @@ async function toggleExpand() {
     destroyCardTerminal()
     stopPolling()
     cardLogs.value = []
-  }
-}
-
-async function sendStdin() {
-  const text = stdinInput.value || ''
-  stdinInput.value = ''
-  if (props.process.usePty && ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'input', data: text + '\r' }))
-  } else {
-    await api(
-      `/api/processes/${encodeURIComponent(props.process.name)}/stdin`,
-      'POST',
-      { input: text }
-    )
   }
 }
 

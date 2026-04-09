@@ -13,7 +13,7 @@
       <span>Terminal — {{ processName }}</span>
       <button class="btn-ghost" @click="$emit('close')" style="margin-left: auto">Close</button>
     </div>
-    <div ref="termContainerRef" class="xterm-container"></div>
+    <div ref="termContainerRef" class="xterm-container" @click="focusTerminal"></div>
   </div>
 </template>
 
@@ -97,10 +97,16 @@ function createTerminal() {
   })
 }
 
+function focusTerminal() {
+  if (term) term.focus()
+}
+
 function destroyTerminal() {
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
   if (term) { term.dispose(); term = null; fitAddon = null }
 }
+
+let wsRetryTimer = null
 
 function connectWs(name) {
   disconnectWs()
@@ -110,15 +116,26 @@ function connectWs(name) {
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   ws = new WebSocket(url)
 
+  ws.onopen = () => {
+    if (term) term.focus()
+  }
+
   ws.onmessage = (ev) => {
     if (term) term.write(ev.data)
   }
 
-  ws.onclose = () => { ws = null }
-  ws.onerror = () => { ws = null }
+  ws.onclose = () => {
+    ws = null
+    // Retry if panel is still open (process may not be ready yet)
+    if (props.processName) {
+      wsRetryTimer = setTimeout(() => connectWs(name), 1500)
+    }
+  }
+  ws.onerror = () => {}
 }
 
 function disconnectWs() {
+  if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null }
   if (ws) { ws.close(); ws = null }
 }
 
@@ -127,8 +144,10 @@ watch(() => props.processName, async (name, oldName) => {
   if (name && name !== oldName) {
     await nextTick()
     if (!term) createTerminal()
-    else { term.clear(); fitAddon.fit() }
+    else { term.clear(); fitWide() }
     connectWs(name)
+    await nextTick()
+    focusTerminal()
   } else if (!name) {
     disconnectWs()
   }
