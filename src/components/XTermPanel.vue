@@ -13,7 +13,7 @@
       <span>Terminal — {{ processName }}</span>
       <button class="btn-ghost" @click="$emit('close')" style="margin-left: auto">Close</button>
     </div>
-    <div ref="termContainerRef" class="xterm-container"></div>
+    <div ref="termContainerRef" class="xterm-container" @click="focusTerminal"></div>
   </div>
 </template>
 
@@ -97,6 +97,10 @@ function createTerminal() {
   })
 }
 
+function focusTerminal() {
+  if (term) term.focus()
+}
+
 function destroyTerminal() {
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
   if (term) { term.dispose(); term = null; fitAddon = null }
@@ -111,6 +115,10 @@ function connectWs(name) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   ws = new WebSocket(url)
+
+  ws.onopen = () => {
+    if (term) term.focus()
+  }
 
   ws.onmessage = (ev) => {
     if (term) term.write(ev.data)
@@ -136,8 +144,10 @@ watch(() => props.processName, async (name, oldName) => {
   if (name && name !== oldName) {
     await nextTick()
     if (!term) createTerminal()
-    else { term.clear(); fitAddon.fit() }
+    else { term.clear(); fitWide() }
     connectWs(name)
+    await nextTick()
+    focusTerminal()
   } else if (!name) {
     disconnectWs()
   }

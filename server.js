@@ -229,6 +229,7 @@ function startProcess(name) {
   const entry = {
     status: 'running',
     logs: [{ ts: Date.now(), source: 'system', text: `Spawning: ${config.command} ${resolvedArgs.join(' ')}` }],
+    ptyRawBuffer: '',       // Raw PTY output for faithful xterm replay
     startedAt: Date.now(),
     config,
   };
@@ -249,6 +250,12 @@ function startProcess(name) {
       proc.onData((data) => {
         appendLog(entry, 'stdout', data);
         broadcastPtyData(name, data);
+        // Buffer raw output for faithful replay on late-connecting terminals
+        entry.ptyRawBuffer += data;
+        // Cap buffer at ~256KB to avoid unbounded memory growth
+        if (entry.ptyRawBuffer.length > 256 * 1024) {
+          entry.ptyRawBuffer = entry.ptyRawBuffer.slice(-128 * 1024);
+        }
       });
 
       proc.onExit(({ exitCode }) => {
@@ -816,11 +823,10 @@ async function bootstrap() {
 
     ws.on('error', () => {});  // Prevent unhandled error crashes
 
-    // Send buffered log text as a single batch so the terminal isn't blank on connect
-    if (entry.logs.length && ws.readyState === 1) {
+    // Replay raw PTY output so late-connecting terminals render TUIs faithfully
+    if (entry.ptyRawBuffer && ws.readyState === 1) {
       try {
-        const batch = entry.logs.filter(l => l.source === 'stdout').map(l => l.text).join('');
-        ws.send(batch);
+        ws.send(entry.ptyRawBuffer);
       } catch {}
     }
 

@@ -57,7 +57,7 @@
     <!-- Inline Log Tray -->
     <div v-if="expanded" class="card-log-tray" @click.stop>
       <!-- xterm.js for PTY processes -->
-      <div v-if="process.usePty" ref="xtermContainerRef" class="card-xterm-container"></div>
+      <div v-if="process.usePty" ref="xtermContainerRef" class="card-xterm-container" @click="focusTerminal"></div>
 
       <!-- HTML logs for non-PTY processes -->
       <div v-if="!process.usePty" ref="logTrayBody" class="card-log-body">
@@ -208,6 +208,10 @@ function fitWide() {
   }
 }
 
+function focusTerminal() {
+  if (term) term.focus()
+}
+
 function destroyCardTerminal() {
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
   if (term) { term.dispose(); term = null; fitAddon = null }
@@ -221,6 +225,7 @@ function connectWs(name) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   ws = new WebSocket(url)
+  ws.onopen = () => { if (term) term.focus() }
   ws.onmessage = (ev) => { if (term) term.write(ev.data) }
   ws.onclose = () => {
     ws = null
@@ -274,7 +279,6 @@ function stopPolling() {
 
 // ── Expand / Collapse ──────────────────────
 async function toggleExpand() {
-  emit('select', props.process.name)
   emit('hover-leave')
   expanded.value = !expanded.value
   if (expanded.value) {
