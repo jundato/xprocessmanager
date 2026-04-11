@@ -234,7 +234,7 @@ function connectWs(name) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   ws = new WebSocket(url)
-  ws.onopen = () => { if (term) term.focus() }
+  ws.onopen = () => {}
   ws.onmessage = (ev) => { if (term) term.write(ev.data) }
   ws.onclose = () => {
     ws = null
