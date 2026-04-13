@@ -20,7 +20,7 @@
         <template v-else>
           <button class="btn-start btn-icon" @click.stop="$emit('start', node.name)" title="Start"><i class="fa-solid fa-play"></i></button>
         </template>
-        <button v-if="node.cwd" class="btn-icon btn-workspace" @click.stop="$emit('open-workspace', node.name)" title="Open Workspace">
+        <button v-if="node.cwd" class="btn-icon btn-workspace" @click.stop="$emit('open-workspace', node)" title="Open Workspace">
           <i class="fa-solid fa-folder-open"></i>
         </button>
         <button class="btn-gear" @click.stop="$emit('edit', node.name)">
@@ -60,7 +60,13 @@
     <!-- Inline Log Tray -->
     <div v-if="expanded" class="card-log-tray" @click.stop>
       <!-- xterm.js for PTY nodes -->
-      <div v-if="node.usePty" ref="xtermContainerRef" class="card-xterm-container" @click="focusTerminal"></div>
+      <div
+        v-if="node.usePty"
+        ref="xtermContainerRef"
+        class="card-xterm-container"
+        tabindex="0"
+        @click="focusTerminal"
+      ></div>
 
       <!-- HTML logs for non-PTY nodes -->
       <div v-if="!node.usePty" ref="logTrayBody" class="card-log-body">
@@ -157,7 +163,16 @@ const uptime = computed(() => {
 
 // ── xterm.js for PTY ───────────────────────
 function createCardTerminal() {
-  if (term || !xtermContainerRef.value) return
+  if (term) {
+    if (xtermContainerRef.value && !term.element) {
+      term.open(xtermContainerRef.value)
+      setupResizeObserver()
+      fitWide()
+    }
+    return
+  }
+  if (!xtermContainerRef.value) return
+
   term = new Terminal({
     cursorBlink: true,
     fontSize: 11,
@@ -189,13 +204,10 @@ function createCardTerminal() {
 
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
+  
+  // ALWAYS open before anything else
   term.open(xtermContainerRef.value)
-  fitWide()
-
-  resizeObserver = new ResizeObserver(() => {
-    fitWide()
-  })
-  resizeObserver.observe(xtermContainerRef.value)
+  setupResizeObserver()
 
   term.onResize(({ cols, rows }) => {
     if (ws && ws.readyState === 1) {
@@ -208,15 +220,35 @@ function createCardTerminal() {
       ws.send(JSON.stringify({ type: 'input', data }))
     }
   })
+
+  fitWide()
+}
+
+function setupResizeObserver() {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+  }
+  if (!xtermContainerRef.value) return
+  resizeObserver = new ResizeObserver(() => {
+    fitWide()
+  })
+  resizeObserver.observe(xtermContainerRef.value)
 }
 
 const WIDE_COLS = 200
 
 function fitWide() {
-  if (!fitAddon || !term) return
+  if (!fitAddon || !term || !term.element) return
   const dims = fitAddon.proposeDimensions()
-  if (dims) {
+  if (dims && dims.cols > 0 && dims.rows > 0) {
     term.resize(WIDE_COLS, dims.rows)
+  } else {
+    // Retry once if zero dimensions
+    setTimeout(() => {
+      if (!fitAddon || !term) return
+      const d2 = fitAddon.proposeDimensions()
+      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(WIDE_COLS, d2.rows)
+    }, 50)
   }
 }
 
@@ -238,7 +270,9 @@ function connectWs(name) {
   const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
   const localWs = new WebSocket(url)
   ws = localWs
-  localWs.onopen = () => {}
+  localWs.onopen = () => {
+    if (term) fitWide()
+  }
   localWs.onmessage = (ev) => { if (ws === localWs && term) term.write(ev.data) }
   localWs.onclose = () => {
     if (ws !== localWs) return
@@ -254,6 +288,7 @@ function disconnectWs() {
   if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null }
   if (ws) { ws.close(); ws = null }
 }
+
 
 // ── HTML logs for non-PTY ──────────────────
 async function fetchCardLogs() {

@@ -1767,9 +1767,8 @@ button:active {
   flex-direction: column;
 }
 
-.workspace-body.has-terminal {
+.workspace-body.has-tabs {
   flex-direction: row;
-  gap: 0;
 }
 
 .workspace-main {
@@ -1780,13 +1779,91 @@ button:active {
   flex-direction: column;
 }
 
-.workspace-terminal-panel {
-  width: 420px;
+.workspace-tabs-panel {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+.workspace-tabs-header {
+  display: flex;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.workspace-tabs-header::-webkit-scrollbar {
+  height: 2px;
+}
+
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  background: var(--surface);
+  transition: background 0.15s, color 0.15s;
+}
+
+.workspace-tab:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.workspace-tab.active {
+  background: var(--bg);
+  color: var(--blue);
+  border-bottom: 2px solid var(--blue);
+  padding-bottom: 6px; /* adjustment for border-bottom */
+}
+
+.tab-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  margin-left: 8px;
+  padding: 2px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.tab-close:hover {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--red);
+  opacity: 1;
+}
+
+.workspace-tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.workspace-terminal-tab,
+.workspace-file-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspace-resizer {
@@ -1805,24 +1882,11 @@ button:active {
   border-left-color: var(--blue);
 }
 
-.workspace-terminal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
 .workspace-terminal-container {
   flex: 1;
   background: #0f1117;
   overflow: hidden;
   padding: 4px;
-  min-height: 0;
 }
 
 .workspace-terminal-container .xterm {

@@ -238,6 +238,7 @@ function startProcess(name) {
     status: 'running',
     logs: [{ ts: Date.now(), source: 'system', text: `Spawning: ${config.command} ${resolvedArgs.join(' ')}` }],
     ptyRawBuffer: '',       // Raw PTY output for faithful xterm replay
+    logRawBuffer: '',       // Raw non-PTY output for faithful xterm replay
     startedAt: Date.now(),
     config,
   };
@@ -285,8 +286,17 @@ function startProcess(name) {
         env
       });
 
-      proc.stdout.on('data', (data) => appendLog(entry, 'stdout', data));
-      proc.stderr.on('data', (data) => appendLog(entry, 'stderr', data));
+      const handleData = (data) => {
+        appendLog(entry, 'stdout', data);
+        broadcastPtyData(name, data);
+        entry.logRawBuffer += data;
+        if (entry.logRawBuffer.length > 256 * 1024) {
+          entry.logRawBuffer = entry.logRawBuffer.slice(-128 * 1024);
+        }
+      };
+
+      proc.stdout.on('data', handleData);
+      proc.stderr.on('data', handleData);
 
       proc.on('error', (err) => {
         entry.status = 'errored';
@@ -301,6 +311,7 @@ function startProcess(name) {
         }
         appendLog(entry, 'system', `Exited with code ${code}`);
         entry.proc = null;
+        disconnectPtyClients(name);
       });
     }
   } catch (err) {
@@ -1022,7 +1033,10 @@ async function bootstrap() {
     if (!name) { ws.close(1008, 'Missing name param'); return; }
 
     const entry = processes.get(name);
-    if (!entry || !entry.ptyProc) { ws.close(1008, 'Not a PTY process'); return; }
+    if (!entry || (entry.status !== 'running' && !entry.logs.length)) { 
+      ws.close(1008, 'Process not found or not running'); 
+      return; 
+    }
 
     // Register client
     if (!wsClients.has(name)) wsClients.set(name, new Set());
@@ -1030,28 +1044,39 @@ async function bootstrap() {
 
     ws.on('error', () => {});  // Prevent unhandled error crashes
 
-    // Replay raw PTY output so late-connecting terminals render TUIs faithfully
-    if (entry.ptyRawBuffer && ws.readyState === 1) {
+    // Replay raw output (PTY or non-PTY) so late-connecting terminals render faithfully
+    const buffer = entry.config.usePty ? entry.ptyRawBuffer : entry.logRawBuffer;
+    if (buffer && ws.readyState === 1) {
       try {
-        ws.send(entry.ptyRawBuffer);
+        ws.send(buffer);
       } catch {}
     }
 
-    // Client → PTY (keyboard input + resize)
+    // Client → Process (keyboard input + resize)
     ws.on('message', (msg) => {
-      if (!entry.ptyProc) return;
       try {
         const parsed = JSON.parse(msg);
         if (parsed.type === 'resize') {
-          entry.ptyProc.resize(
-            Math.min(parsed.cols, 300),
-            Math.min(parsed.rows, 100)
-          );
+          if (entry.ptyProc) {
+            entry.ptyProc.resize(
+              Math.min(parsed.cols, 300),
+              Math.min(parsed.rows, 100)
+            );
+          }
         } else if (parsed.type === 'input') {
-          entry.ptyProc.write(parsed.data);
+          if (entry.ptyProc) {
+            entry.ptyProc.write(parsed.data);
+          } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
+            entry.proc.stdin.write(parsed.data);
+          }
         }
       } catch {
-        entry.ptyProc.write(msg.toString());
+        const data = msg.toString();
+        if (entry.ptyProc) {
+          entry.ptyProc.write(data);
+        } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
+          entry.proc.stdin.write(data);
+        }
       }
     });
 

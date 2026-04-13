@@ -1,181 +1,193 @@
 <template>
   <div v-if="show" class="modal-overlay" @mousedown.self="overlayMouseDown = true" @click.self="handleOverlayClick">
-    <div class="modal workspace-modal" :class="{ 'workspace-modal-editor': !!openFile || terminalOpen, 'workspace-modal-with-term': terminalOpen }">
+    <div class="modal workspace-modal" :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-with-term': tabs.some(t => t.id === 'terminal') }">
       <div class="workspace-header">
         <h2>
           <i class="fa-solid fa-folder-open" style="margin-right: 8px; color: var(--yellow)"></i>
           {{ nodeName }}
         </h2>
         <div style="display: flex; gap: 6px; margin-left: auto">
-          <button
-            class="btn-ghost workspace-terminal-toggle"
-            :class="{ active: terminalOpen }"
-            @click="toggleTerminal"
-            title="Toggle Terminal"
-          >
-            <i class="fa-solid fa-terminal" style="margin-right: 4px"></i>Terminal
-          </button>
           <button class="btn-ghost" @click="handleClose">Close</button>
         </div>
       </div>
 
-      <div class="workspace-body" :class="{ 'has-terminal': terminalOpen }">
-        <!-- Main content pane -->
+      <div class="workspace-body" :class="{ 'has-tabs': tabs.length > 0 }">
+        <!-- Main content pane (Browser) -->
         <div class="workspace-main">
-          <!-- File Browser -->
-          <template v-if="!openFile">
-            <div class="workspace-search-bar">
-              <i class="fa-solid fa-magnifying-glass workspace-search-icon"></i>
-              <input
-                ref="searchInputRef"
-                v-model="searchQuery"
-                type="text"
-                class="workspace-search-input"
-                placeholder="Search files and content..."
-                @input="onSearchInput"
-                @keydown.esc="clearSearch"
-              />
-              <button v-if="searchQuery" class="workspace-search-clear" @click="clearSearch">
-                <i class="fa-solid fa-xmark"></i>
-              </button>
+          <div class="workspace-search-bar">
+            <i class="fa-solid fa-magnifying-glass workspace-search-icon"></i>
+            <input
+              ref="searchInputRef"
+              v-model="searchQuery"
+              type="text"
+              class="workspace-search-input"
+              placeholder="Search files and content..."
+              @input="onSearchInput"
+              @keydown.esc="clearSearch"
+            />
+            <button v-if="searchQuery" class="workspace-search-clear" @click="clearSearch">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <!-- Search Results -->
+          <template v-if="searchActive">
+            <div class="workspace-file-list">
+              <div class="workspace-file-list-header">
+                <input
+                  type="checkbox"
+                  class="workspace-file-checkbox"
+                  :checked="isAllInViewSelected"
+                  @change="toggleSelectAllInView"
+                />
+                <span>File</span>
+                <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
+                  {{ selectedFiles.length }} selected
+                </span>
+              </div>
+              <div v-if="searchLoading" class="workspace-empty">Searching...</div>
+              <div v-if="!searchLoading && !searchResults.length && searchQuery" class="workspace-empty">No results found</div>
+              <div
+                v-for="(result, i) in searchResults"
+                :key="i"
+                class="workspace-file-item clickable"
+                @click="openFileFromSearch(result)"
+              >
+                <input
+                  type="checkbox"
+                  class="workspace-file-checkbox"
+                  :checked="selectedFiles.includes(result.path)"
+                  @click.stop="toggleFileSelection(result.path)"
+                />
+                <i :class="fileIconByName(result.path)" style="width: 16px"></i>
+                <div class="search-result-info">
+                  <span class="file-name">{{ result.path }}</span>
+                  <span v-if="result.type === 'content'" class="search-result-line">
+                    L{{ result.line }}: {{ result.text }}
+                  </span>
+                </div>
+                <span class="search-result-badge" :class="result.type === 'file' ? 'badge-file' : 'badge-content'">
+                  {{ result.type === 'file' ? 'name' : 'content' }}
+                </span>
+              </div>
             </div>
-
-            <!-- Search Results -->
-            <template v-if="searchActive">
-              <div class="workspace-file-list">
-                <div class="workspace-file-list-header">
-                  <input
-                    type="checkbox"
-                    class="workspace-file-checkbox"
-                    :checked="isAllInViewSelected"
-                    @change="toggleSelectAllInView"
-                  />
-                  <span>File</span>
-                  <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
-                    {{ selectedFiles.length }} selected
-                  </span>
-                </div>
-                <div v-if="searchLoading" class="workspace-empty">Searching...</div>
-                <div v-if="!searchLoading && !searchResults.length && searchQuery" class="workspace-empty">No results found</div>
-                <div
-                  v-for="(result, i) in searchResults"
-                  :key="i"
-                  class="workspace-file-item clickable"
-                  @click="openFileFromSearch(result)"
-                >
-                  <input
-                    type="checkbox"
-                    class="workspace-file-checkbox"
-                    :checked="selectedFiles.includes(result.path)"
-                    @click.stop="toggleFileSelection(result.path)"
-                  />
-                  <i :class="fileIconByName(result.path)" style="width: 16px"></i>
-                  <div class="search-result-info">
-                    <span class="file-name">{{ result.path }}</span>
-                    <span v-if="result.type === 'content'" class="search-result-line">
-                      L{{ result.line }}: {{ result.text }}
-                    </span>
-                  </div>
-                  <span class="search-result-badge" :class="result.type === 'file' ? 'badge-file' : 'badge-content'">
-                    {{ result.type === 'file' ? 'name' : 'content' }}
-                  </span>
-                </div>
-              </div>
-            </template>
-
-            <!-- Normal Directory Listing -->
-            <template v-else>
-              <div class="workspace-breadcrumb">
-                <span class="breadcrumb-segment" @click="navigateTo('')">root</span>
-                <template v-for="(seg, i) in pathSegments" :key="i">
-                  <span class="breadcrumb-sep">/</span>
-                  <span class="breadcrumb-segment" @click="navigateTo(pathSegments.slice(0, i + 1).join('/'))">{{ seg }}</span>
-                </template>
-              </div>
-              <div class="workspace-file-list">
-                <div class="workspace-file-list-header">
-                  <input
-                    type="checkbox"
-                    class="workspace-file-checkbox"
-                    :checked="isAllInViewSelected"
-                    @change="toggleSelectAllInView"
-                  />
-                  <span>Name</span>
-                  <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
-                    {{ selectedFiles.length }} selected
-                  </span>
-                </div>
-                <div v-if="currentPath" class="workspace-file-item directory" @click="navigateUp">
-                  <div style="width: 14px; flex-shrink: 0"></div>
-                  <i class="fa-solid fa-arrow-up" style="width: 16px; color: var(--text-dim)"></i>
-                  <span class="file-name">..</span>
-                </div>
-                <div
-                  v-for="file in files"
-                  :key="file.name"
-                  class="workspace-file-item"
-                  :class="{ directory: file.isDirectory, clickable: !file.isDirectory }"
-                  @click="handleFileClick(file)"
-                >
-                  <input
-                    type="checkbox"
-                    class="workspace-file-checkbox"
-                    :checked="selectedFiles.includes(currentPath ? `${currentPath}/${file.name}` : file.name)"
-                    @click.stop="toggleFileSelection(currentPath ? `${currentPath}/${file.name}` : file.name)"
-                  />
-                  <i :class="fileIcon(file)" style="width: 16px"></i>
-                  <span class="file-name">{{ file.name }}</span>
-                  <span v-if="!file.isDirectory && file.size != null" class="file-size">{{ formatSize(file.size) }}</span>
-                </div>
-                <div v-if="!listLoading && !files.length" class="workspace-empty">Empty directory</div>
-                <div v-if="listLoading" class="workspace-empty">Loading...</div>
-                <div v-if="listError" class="workspace-empty" style="color: var(--red)">{{ listError }}</div>
-              </div>
-            </template>
           </template>
 
-          <!-- File View (Editor or Markdown Preview) -->
-          <template v-if="openFile">
-            <div class="workspace-editor-bar">
-              <span class="workspace-editor-filename">
-                <i :class="fileIconByName(openFile)" style="margin-right: 6px"></i>
-                {{ openFile }}
-              </span>
-              <div style="display: flex; gap: 6px; align-items: center">
-                <button class="btn-ghost" @click="closeFile" style="padding: 3px 10px; font-size: 11px">
-                  <i class="fa-solid fa-arrow-left" style="margin-right: 4px"></i>Back
-                </button>
-                <button v-if="isMarkdown" class="btn-ghost" style="padding: 3px 10px; font-size: 11px" @click="toggleMarkdownEdit">
-                  <i :class="markdownEditMode ? 'fa-solid fa-eye' : 'fa-solid fa-pen'" style="margin-right: 4px"></i>
-                  {{ markdownEditMode ? 'Preview' : 'Edit Source' }}
-                </button>
-                <span v-if="dirty" class="workspace-dirty-badge">Modified</span>
-                <button v-if="!isMarkdown || markdownEditMode" class="btn-start" :disabled="!dirty || saving" @click="saveFile" style="padding: 4px 12px; font-size: 12px">
-                  {{ saving ? 'Saving...' : 'Save' }}
-                </button>
-              </div>
+          <!-- Normal Directory Listing -->
+          <template v-else>
+            <div class="workspace-breadcrumb">
+              <span class="breadcrumb-segment" @click="navigateTo('')">root</span>
+              <template v-for="(seg, i) in pathSegments" :key="i">
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-segment" @click="navigateTo(pathSegments.slice(0, i + 1).join('/'))">{{ seg }}</span>
+              </template>
             </div>
-            <div v-if="fileLoading" class="workspace-empty">Loading file...</div>
-            <div v-if="fileError" class="workspace-empty" style="color: var(--red)">{{ fileError }}</div>
-
-            <!-- Markdown rendered preview -->
-            <div v-if="isMarkdown && !markdownEditMode" ref="mdPreviewRef" class="workspace-md-preview" v-html="renderedMarkdown"></div>
-
-            <!-- Monaco editor -->
-            <div v-show="!isMarkdown || markdownEditMode" ref="editorContainerRef" class="workspace-editor-container"></div>
+            <div class="workspace-file-list">
+              <div class="workspace-file-list-header">
+                <input
+                  type="checkbox"
+                  class="workspace-file-checkbox"
+                  :checked="isAllInViewSelected"
+                  @change="toggleSelectAllInView"
+                />
+                <span>Name</span>
+                <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
+                  {{ selectedFiles.length }} selected
+                </span>
+              </div>
+              <div v-if="currentPath" class="workspace-file-item directory" @click="navigateUp">
+                <div style="width: 14px; flex-shrink: 0"></div>
+                <i class="fa-solid fa-arrow-up" style="width: 16px; color: var(--text-dim)"></i>
+                <span class="file-name">..</span>
+              </div>
+              <div
+                v-for="file in files"
+                :key="file.name"
+                class="workspace-file-item"
+                :class="{ directory: file.isDirectory, clickable: !file.isDirectory }"
+                @click="handleFileClick(file)"
+              >
+                <input
+                  type="checkbox"
+                  class="workspace-file-checkbox"
+                  :checked="selectedFiles.includes(currentPath ? `${currentPath}/${file.name}` : file.name)"
+                  @click.stop="toggleFileSelection(currentPath ? `${currentPath}/${file.name}` : file.name)"
+                />
+                <i :class="fileIcon(file)" style="width: 16px"></i>
+                <span class="file-name">{{ file.name }}</span>
+                <span v-if="!file.isDirectory && file.size != null" class="file-size">{{ formatSize(file.size) }}</span>
+              </div>
+              <div v-if="!listLoading && !files.length" class="workspace-empty">Empty directory</div>
+              <div v-if="listLoading" class="workspace-empty">Loading...</div>
+              <div v-if="listError" class="workspace-empty" style="color: var(--red)">{{ listError }}</div>
+            </div>
           </template>
         </div>
 
-        <!-- Terminal resizer -->
-        <div v-if="terminalOpen" class="workspace-resizer" @mousedown="startResizing"></div>
+        <!-- Resizer -->
+        <div v-if="tabs.length > 0" class="workspace-resizer" @mousedown="startResizing"></div>
 
-        <!-- Terminal side panel -->
-        <div v-if="terminalOpen" class="workspace-terminal-panel" :style="{ width: terminalWidth + 'px' }">
-          <div class="workspace-terminal-header">
-            <span><i class="fa-solid fa-terminal" style="margin-right: 6px"></i>Terminal</span>
-            <button class="btn-ghost" style="padding: 2px 8px; font-size: 11px" @click="toggleTerminal">Close</button>
+        <!-- Tabbed side panel -->
+        <div v-if="tabs.length > 0" class="workspace-tabs-panel" :style="{ width: terminalWidth + 'px' }">
+          <div class="workspace-tabs-header">
+            <div
+              v-for="tab in tabs"
+              :key="tab.id"
+              class="workspace-tab"
+              :class="{ active: activeTabId === tab.id }"
+              @click="activeTabId = tab.id"
+            >
+              <i :class="tab.type === 'terminal' ? 'fa-solid fa-terminal' : fileIconByName(tab.name)" style="margin-right: 6px"></i>
+              <span class="tab-name">{{ tab.name }}</span>
+              <button v-if="tab.type !== 'terminal'" class="tab-close" @click.stop="closeTab(tab.id)">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
           </div>
-          <div ref="wsTermContainerRef" class="workspace-terminal-container" @click="focusWsTerm"></div>
+
+          <div class="workspace-tab-content">
+            <!-- Terminal Tab -->
+            <div v-show="activeTab?.type === 'terminal'" class="workspace-terminal-tab">
+              <div v-if="nodeStatus !== 'running'" class="workspace-terminal-start">
+                <i class="fa-solid fa-terminal" style="font-size: 3rem; color: var(--text-dim); margin-bottom: 1rem"></i>
+                <h3>Terminal is not available</h3>
+                <p style="color: var(--text-dim); margin-bottom: 1.5rem">The process must be running to access the terminal.</p>
+                <button class="btn-start" @click="handleStartNode" style="padding: 10px 24px; font-size: 1rem">
+                  <i class="fa-solid fa-play" style="margin-right: 8px"></i>Start Process
+                </button>
+              </div>
+              <div v-else ref="wsTermContainerRef" class="workspace-terminal-container" tabindex="0" @click="focusWsTerm"></div>
+            </div>
+
+            <!-- File Tab -->
+            <div v-show="activeTab?.type === 'file'" class="workspace-file-tab">
+              <div class="workspace-editor-bar">
+                <span class="workspace-editor-filename">
+                  <i :class="fileIconByName(activeTab?.path || '')" style="margin-right: 6px"></i>
+                  {{ activeTab?.path }}
+                </span>
+                <div style="display: flex; gap: 6px; align-items: center">
+                  <button v-if="isMarkdown" class="btn-ghost" style="padding: 3px 10px; font-size: 11px" @click="toggleMarkdownEdit">
+                    <i :class="markdownEditMode ? 'fa-solid fa-eye' : 'fa-solid fa-pen'" style="margin-right: 4px"></i>
+                    {{ markdownEditMode ? 'Preview' : 'Edit Source' }}
+                  </button>
+                  <span v-if="dirty" class="workspace-dirty-badge">Modified</span>
+                  <button v-if="!isMarkdown || markdownEditMode" class="btn-start" :disabled="!dirty || saving" @click="saveFile" style="padding: 4px 12px; font-size: 12px">
+                    {{ saving ? 'Saving...' : 'Save' }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="fileLoading" class="workspace-empty">Loading file...</div>
+              <div v-if="fileError" class="workspace-empty" style="color: var(--red)">{{ fileError }}</div>
+
+              <!-- Markdown rendered preview -->
+              <div v-if="isMarkdown && !markdownEditMode" ref="mdPreviewRef" class="workspace-md-preview" v-html="renderedMarkdown"></div>
+
+              <!-- Monaco editor container -->
+              <div v-show="!isMarkdown || markdownEditMode" ref="editorContainerRef" class="workspace-editor-container"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -183,7 +195,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onUnmounted, shallowRef } from 'vue'
+import { ref, watch, computed, nextTick, onUnmounted, shallowRef, markRaw } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -192,15 +204,29 @@ import { api } from '../composables/useApi.js'
 const props = defineProps({
   show: { type: Boolean, default: false },
   nodeName: { type: String, default: null },
+  nodeStatus: { type: String, default: null },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'start-node'])
+
+async function handleStartNode() {
+  if (!props.nodeName) return
+  emit('start-node', props.nodeName)
+}
+
+// Watch status to auto-initialize terminal if it becomes running while modal is open
+watch(() => props.nodeStatus, async (status) => {
+  if (props.show && status === 'running' && activeTabId.value === 'terminal') {
+    await nextTick()
+    createWsTerm()
+    connectWsTerm(props.nodeName)
+  }
+})
 
 const overlayMouseDown = ref(false)
 function handleOverlayClick() {
   if (overlayMouseDown.value) {
-    if (openFile.value) closeFile()
-    else emit('close')
+    handleClose()
   }
   overlayMouseDown.value = false
 }
@@ -210,7 +236,43 @@ function handleClose() {
   emit('close')
 }
 
-// ── Search State ────────────────────────────
+// ── Tabs State ──────────────────────────────
+const tabs = ref([]) // { id, type: 'file'|'terminal', name, path, model, state }
+const activeTabId = ref(null)
+
+const activeTab = computed(() => tabs.value.find((t) => t.id === activeTabId.value))
+
+function addTab(tab) {
+  const existing = tabs.value.find((t) => t.id === tab.id)
+  if (!existing) {
+    tabs.value.push(tab)
+  }
+  activeTabId.value = tab.id
+}
+
+async function closeTab(id) {
+  const idx = tabs.value.findIndex((t) => t.id === id)
+  if (idx === -1) return
+
+  const tab = tabs.value[idx]
+  if (tab.type === 'file' && tab.model) {
+    tab.model.dispose()
+  }
+  if (tab.type === 'terminal') {
+    closeTerminal()
+  }
+
+  tabs.value.splice(idx, 1)
+
+  if (activeTabId.value === id) {
+    if (tabs.value.length > 0) {
+      activeTabId.value = tabs.value[Math.max(0, idx - 1)].id
+    } else {
+      activeTabId.value = null
+    }
+  }
+}
+
 const searchInputRef = ref(null)
 const searchQuery = ref('')
 const searchResults = ref([])
@@ -337,7 +399,6 @@ function handleFileClick(file) {
 }
 
 // ── Editor / Preview State ──────────────────
-const openFile = ref(null)
 const fileLoading = ref(false)
 const fileError = ref(null)
 const dirty = ref(false)
@@ -352,11 +413,10 @@ let monacoModule = shallowRef(null)
 let markedModule = null
 let mermaidModule = null
 let mermaidId = 0
-let originalContent = ''
 
 const isMarkdown = computed(() => {
-  if (!openFile.value) return false
-  return openFile.value.toLowerCase().endsWith('.md')
+  if (activeTab.value?.type !== 'file') return false
+  return activeTab.value.path.toLowerCase().endsWith('.md')
 })
 
 async function loadMarked() {
@@ -417,8 +477,8 @@ async function renderMermaidBlocks() {
 
 async function toggleMarkdownEdit() {
   if (markdownEditMode.value) {
-    if (editorInstance) {
-      originalContent = dirty.value ? editorInstance.getValue() : originalContent
+    if (editorInstance && activeTab.value?.type === 'file') {
+      activeTab.value.originalContent = dirty.value ? editorInstance.getValue() : activeTab.value.originalContent
       renderedMarkdown.value = renderMarkdown(editorInstance.getValue())
     }
     markdownEditMode.value = false
@@ -426,8 +486,10 @@ async function toggleMarkdownEdit() {
   } else {
     markdownEditMode.value = true
     await nextTick()
-    if (!editorInstance && editorContainerRef.value) {
-      await createEditor(openFile.value, originalContent)
+    if (!editorInstance && editorContainerRef.value && activeTab.value?.type === 'file') {
+      await createEditor(activeTab.value.path, activeTab.value.originalContent)
+    } else if (editorInstance && activeTab.value?.type === 'file') {
+      editorInstance.setModel(activeTab.value.model)
     }
   }
 }
@@ -475,7 +537,17 @@ async function loadMonaco() {
 }
 
 async function openFileView(filePath, goToLine) {
-  openFile.value = filePath
+  const existingTab = tabs.value.find((t) => t.path === filePath)
+  if (existingTab) {
+    activeTabId.value = existingTab.id
+    if (goToLine && editorInstance && existingTab.model) {
+      editorInstance.revealLineInCenter(goToLine)
+      editorInstance.setPosition({ lineNumber: goToLine, column: 1 })
+      editorInstance.focus()
+    }
+    return
+  }
+
   fileLoading.value = true
   fileError.value = null
   dirty.value = false
@@ -486,7 +558,20 @@ async function openFileView(filePath, goToLine) {
   fileLoading.value = false
   if (res.error) { fileError.value = res.error; return }
 
-  originalContent = res.content
+  const monaco = await loadMonaco()
+  const model = markRaw(monaco.editor.createModel(res.content, getLang(filePath)))
+
+  const newTab = {
+    id: `file-${filePath}`,
+    type: 'file',
+    name: filePath.split('/').pop(),
+    path: filePath,
+    model: model,
+    originalContent: res.content,
+    isDirty: false,
+  }
+
+  addTab(newTab)
 
   if (filePath.toLowerCase().endsWith('.md')) {
     await loadMarked()
@@ -499,32 +584,37 @@ async function openFileView(filePath, goToLine) {
 }
 
 async function createEditor(filePath, content, goToLine) {
-  disposeEditor()
   if (!editorContainerRef.value) return
 
   const monaco = await loadMonaco()
-  editorInstance = monaco.editor.create(editorContainerRef.value, {
-    value: content,
-    language: getLang(filePath),
-    theme: 'vs-dark',
-    minimap: { enabled: false },
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-    lineNumbers: 'on',
-    scrollBeyondLastLine: false,
-    automaticLayout: true,
-    tabSize: 2,
-    wordWrap: 'on',
-    padding: { top: 8 },
-  })
+  if (!editorInstance) {
+    editorInstance = monaco.editor.create(editorContainerRef.value, {
+      theme: 'vs-dark',
+      minimap: { enabled: false },
+      fontSize: 13,
+      fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+      lineNumbers: 'on',
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      tabSize: 2,
+      wordWrap: 'on',
+      padding: { top: 8 },
+    })
 
-  editorInstance.onDidChangeModelContent(() => {
-    dirty.value = editorInstance.getValue() !== originalContent
-  })
+    editorInstance.onDidChangeModelContent(() => {
+      if (activeTab.value?.type === 'file') {
+        dirty.value = editorInstance.getValue() !== activeTab.value.originalContent
+      }
+    })
 
-  editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-    if (dirty.value) saveFile()
-  })
+    editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      if (dirty.value) saveFile()
+    })
+  }
+
+  if (activeTab.value?.type === 'file' && activeTab.value.model) {
+    editorInstance.setModel(activeTab.value.model)
+  }
 
   if (goToLine) {
     editorInstance.revealLineInCenter(goToLine)
@@ -533,38 +623,58 @@ async function createEditor(filePath, content, goToLine) {
   }
 }
 
+watch(activeTabId, async (newId) => {
+  const tab = tabs.value.find((t) => t.id === newId)
+  if (tab?.type === 'file') {
+    if (tab.path.toLowerCase().endsWith('.md')) {
+      if (!markdownEditMode.value) {
+        renderedMarkdown.value = renderMarkdown(tab.model.getValue())
+        await renderMermaidBlocks()
+      }
+    }
+    await nextTick()
+    if (editorContainerRef.value) {
+      if (!editorInstance) {
+        await createEditor(tab.path, tab.model.getValue())
+      } else {
+        editorInstance.setModel(tab.model)
+        dirty.value = editorInstance.getValue() !== tab.originalContent
+      }
+    }
+  } else if (tab?.type === 'terminal') {
+    if (props.nodeStatus === 'running') {
+      await nextTick()
+      createWsTerm()
+      connectWsTerm(props.nodeName)
+      fitWsTerm()
+    }
+  }
+})
+
 function disposeEditor() {
   if (editorInstance) { editorInstance.dispose(); editorInstance = null }
-}
-
-function closeFile() {
-  disposeEditor()
-  openFile.value = null
-  fileError.value = null
-  dirty.value = false
-  markdownEditMode.value = false
-  renderedMarkdown.value = ''
+  tabs.value.forEach((t) => {
+    if (t.model) t.model.dispose()
+  })
 }
 
 async function saveFile() {
-  if (!editorInstance || !openFile.value) return
+  if (!editorInstance || activeTab.value?.type !== 'file') return
   saving.value = true
   const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file`, 'PUT', {
-    path: openFile.value,
+    path: activeTab.value.path,
     content: editorInstance.getValue(),
   })
   saving.value = false
   if (res.error) { fileError.value = res.error; return }
-  originalContent = editorInstance.getValue()
+  activeTab.value.originalContent = editorInstance.getValue()
   dirty.value = false
 }
 
 // ── Embedded Terminal ───────────────────────
-const terminalOpen = ref(false)
+let isResizing = false
 const terminalWidth = ref(420)
 const wsTermContainerRef = ref(null)
-
-let isResizing = false
 
 function startResizing(e) {
   isResizing = true
@@ -576,9 +686,6 @@ function startResizing(e) {
 
 function doResizing(e) {
   if (!isResizing) return
-  // Calculate new width: total width - mouse X position
-  // But wait, the modal is centered. It's easier to use the current width and the delta.
-  // Actually, since it's on the right:
   const modalRect = document.querySelector('.workspace-modal').getBoundingClientRect()
   const newWidth = modalRect.right - e.clientX
   if (newWidth > 200 && newWidth < modalRect.width - 200) {
@@ -612,19 +719,16 @@ const TERM_THEME = {
   brightBlue: '#93c5fd', brightMagenta: '#c4b5fd', brightCyan: '#67e8f9', brightWhite: '#f8fafc',
 }
 
-async function toggleTerminal() {
-  if (terminalOpen.value) {
-    closeTerminal()
-  } else {
-    terminalOpen.value = true
-    await nextTick()
-    createWsTerm()
-    connectWsTerm(props.nodeName)
-  }
-}
-
 function createWsTerm() {
-  if (wsTerm || !wsTermContainerRef.value) return
+  if (wsTerm) {
+    if (wsTermContainerRef.value && !wsTerm.element) {
+      wsTerm.open(wsTermContainerRef.value)
+      setupWsTermResizeObserver()
+    }
+    return
+  }
+  if (!wsTermContainerRef.value) return
+
   wsTerm = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -636,11 +740,12 @@ function createWsTerm() {
   wsTermFitAddon = new FitAddon()
   wsTerm.loadAddon(wsTermFitAddon)
   wsTerm.loadAddon(new WebLinksAddon())
-  wsTerm.open(wsTermContainerRef.value)
-  fitWsTerm()
-
-  wsTermResizeObserver = new ResizeObserver(() => fitWsTerm())
-  wsTermResizeObserver.observe(wsTermContainerRef.value)
+  
+  if (wsTermContainerRef.value) {
+    wsTerm.open(wsTermContainerRef.value)
+    setupWsTermResizeObserver()
+    fitWsTerm()
+  }
 
   wsTerm.onResize(({ cols, rows }) => {
     if (wsTermWs && wsTermWs.readyState === 1) {
@@ -655,9 +760,29 @@ function createWsTerm() {
   })
 }
 
+function setupWsTermResizeObserver() {
+  if (wsTermResizeObserver) {
+    wsTermResizeObserver.disconnect()
+  }
+  if (!wsTermContainerRef.value) return
+  wsTermResizeObserver = new ResizeObserver(() => fitWsTerm())
+  wsTermResizeObserver.observe(wsTermContainerRef.value)
+}
+
 function fitWsTerm() {
-  if (!wsTermFitAddon || !wsTerm) return
-  try { wsTermFitAddon.fit() } catch {}
+  if (!wsTermFitAddon || !wsTerm || !wsTerm.element) return
+  try {
+    const dims = wsTermFitAddon.proposeDimensions()
+    if (dims && dims.cols > 0 && dims.rows > 0) {
+      wsTermFitAddon.fit()
+    } else {
+      setTimeout(() => {
+        if (!wsTermFitAddon || !wsTerm || !wsTerm.element) return
+        const d2 = wsTermFitAddon.proposeDimensions()
+        if (d2 && d2.cols > 0 && d2.rows > 0) wsTermFitAddon.fit()
+      }, 50)
+    }
+  } catch {}
 }
 
 function focusWsTerm() {
@@ -673,6 +798,10 @@ function connectWsTerm(name) {
   const localWs = new WebSocket(url)
   wsTermWs = localWs
 
+  localWs.onopen = () => {
+    if (wsTerm) fitWsTerm()
+  }
+
   localWs.onmessage = (ev) => {
     if (wsTermWs === localWs && wsTerm) wsTerm.write(ev.data)
   }
@@ -680,7 +809,7 @@ function connectWsTerm(name) {
   localWs.onclose = () => {
     if (wsTermWs !== localWs) return
     wsTermWs = null
-    if (terminalOpen.value && props.nodeName === name) {
+    if (tabs.value.some(t => t.id === 'terminal') && props.nodeName === name) {
       wsTermRetryTimer = setTimeout(() => connectWsTerm(name), 1500)
     }
   }
@@ -698,13 +827,12 @@ function destroyWsTerm() {
   if (wsTerm) { wsTerm.dispose(); wsTerm = null; wsTermFitAddon = null }
 }
 
+
 function closeTerminal() {
-  terminalOpen.value = false
   disconnectWsTerm()
   destroyWsTerm()
 }
 
-// ── Icon Helpers ────────────────────────────
 function fileIcon(file) {
   if (file.isDirectory) return 'fa-solid fa-folder file-icon-dir'
   return fileIconByName(file.name)
@@ -729,22 +857,47 @@ function formatSize(bytes) {
 watch(() => props.show, (val) => {
   if (val && props.nodeName) {
     currentPath.value = ''
-    openFile.value = null
+    tabs.value = []
+    activeTabId.value = null
     selectedFiles.value = []
     clearSearch()
     fetchFiles('')
+
+    // Default to terminal tab
+    addTab({ id: 'terminal', type: 'terminal', name: 'Terminal' })
+    if (props.nodeStatus === 'running') {
+      nextTick(() => {
+        createWsTerm()
+        connectWsTerm(props.nodeName)
+      })
+    }
   } else if (!val) {
     disposeEditor()
     closeTerminal()
-    openFile.value = null
+    tabs.value = []
+    activeTabId.value = null
     selectedFiles.value = []
     markdownEditMode.value = false
     renderedMarkdown.value = ''
   }
 })
 
-onUnmounted(() => {
-  disposeEditor()
-  closeTerminal()
-})
 </script>
+
+<style scoped>
+.workspace-terminal-start {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #0f1117;
+  text-align: center;
+  padding: 2rem;
+}
+.workspace-terminal-start h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+</style>

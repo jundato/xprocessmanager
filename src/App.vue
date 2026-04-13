@@ -103,7 +103,9 @@
   <WorkspaceModal
     :show="workspaceModalStore.show"
     :node-name="workspaceModalStore.nodeName"
+    :node-status="workspaceModalStatus"
     @close="closeWorkspaceModal"
+    @start-node="handleStart"
   />
 
   <AlertModal />
@@ -348,8 +350,14 @@ const workspaceModalStore = reactive({
   nodeName: null,
 })
 
-function openWorkspaceModal(name) {
-  workspaceModalStore.nodeName = name
+const workspaceModalStatus = computed(() => {
+  if (!workspaceModalStore.nodeName) return null
+  const node = nodeStore.nodes.value.find(n => n.name === workspaceModalStore.nodeName)
+  return node?.status || 'stopped'
+})
+
+function openWorkspaceModal(node) {
+  workspaceModalStore.nodeName = node.name
   workspaceModalStore.show = true
 }
 
