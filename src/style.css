@@ -777,6 +777,61 @@ button:active {
   border-color: var(--red);
 }
 
+/* ── Command Template Picker ──────────────── */
+.cmd-template-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  padding: 4px;
+  animation: fadeInDown 0.1s ease;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.cmd-template-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cmd-template-item:hover {
+  background: var(--surface2);
+}
+
+.cmd-template-icon {
+  font-size: 15px;
+  color: var(--purple);
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.cmd-template-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cmd-template-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 1px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
 .btn-gear {
   background: transparent;
   color: var(--text-dim);

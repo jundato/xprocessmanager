@@ -84,9 +84,11 @@
     :editing-name="editingNodeName"
     :group-names="groupNames"
     :nodes="nodeStore.nodes.value"
+    :clone-data="cloneFormData"
     @close="closeNodeModal"
     @submit="handleNodeSubmit"
     @remove="handleNodeRemove"
+    @clone="handleNodeClone"
   />
 
   <BranchModal
@@ -246,6 +248,7 @@ const groupNames = computed(() => {
 // ── Node Modal ─────────────────────────────
 const showNodeModal = ref(false)
 const editingNodeName = ref(null)
+const cloneFormData = ref(null)
 
 function openAddModal() {
   editingNodeName.value = null
@@ -260,6 +263,7 @@ function openEditModal(name) {
 function closeNodeModal() {
   showNodeModal.value = false
   editingNodeName.value = null
+  cloneFormData.value = null
 }
 
 async function handleNodeSubmit({ data, isEditing, editingName }) {
@@ -281,6 +285,14 @@ async function handleNodeRemove(name) {
     if (logStore.selectedNode.value === name) logStore.closeLog()
     closeNodeModal()
   }
+}
+
+function handleNodeClone(cloneData) {
+  // Close the edit dialog and open an Add dialog pre-filled with cloned data
+  closeNodeModal()
+  cloneFormData.value = cloneData
+  editingNodeName.value = null
+  showNodeModal.value = true
 }
 
 // ── Node Actions ───────────────────────────
