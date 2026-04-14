@@ -28,6 +28,7 @@
           <div style="display: flex; gap: 6px; position: relative">
             <input v-model="form.command" type="text" placeholder="pwsh, node, docker, npm..." style="flex: 1" />
             <button
+              v-if="form.type === 'agent'"
               type="button"
               class="btn-ghost cmd-template-btn"
               @click.stop="toggleTemplateMenu"
@@ -138,6 +139,7 @@ const form = reactive({
 
 watch(() => form.type, (type) => {
   form.usePty = type === 'agent'
+  if (type !== 'agent') templateMenuOpen.value = false
 })
 
 const resolvedCwd = ref(null)
