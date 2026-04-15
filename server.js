@@ -139,6 +139,21 @@ function disconnectPtyClients(name) {
   }
 }
 
+const INPUT_PATTERNS = [
+  /\?\s*$/m,           // lines ending with "?"
+  />\s*$/m,            // interactive caret prompts
+  /press enter/i,
+  /\([yY]\/[nN]\)/,
+  /do you want to/i,
+];
+
+function checkNeedsInput(entry, text) {
+  if (!entry) return;
+  if (INPUT_PATTERNS.some(p => p.test(text))) {
+    entry.needsInput = true;
+  }
+}
+
 function resolveTemplate(str) {
   if (!str) return str;
   return str.replace(/\{(\w+)\}/g, (match, key) => {
@@ -168,6 +183,7 @@ function getState(name) {
     pid: entry.proc?.pid ?? null,
     logs: entry.logs,
     startedAt: entry.startedAt,
+    needsInput: entry.needsInput || false,
   };
 }
 
@@ -259,6 +275,7 @@ function startProcess(name) {
       proc.onData((data) => {
         appendLog(entry, 'stdout', data);
         broadcastPtyData(name, data);
+        checkNeedsInput(entry, data.toString());
         // Buffer raw output for faithful replay on late-connecting terminals
         entry.ptyRawBuffer += data;
         // Cap buffer at ~256KB to avoid unbounded memory growth
@@ -289,6 +306,7 @@ function startProcess(name) {
       const handleData = (data) => {
         appendLog(entry, 'stdout', data);
         broadcastPtyData(name, data);
+        checkNeedsInput(entry, data.toString());
         entry.logRawBuffer += data;
         if (entry.logRawBuffer.length > 256 * 1024) {
           entry.logRawBuffer = entry.logRawBuffer.slice(-128 * 1024);
@@ -386,6 +404,7 @@ app.get('/api/processes', (_req, res) => {
       status: state.status,
       pid: state.pid,
       startedAt: state.startedAt,
+      needsInput: state.needsInput,
     };
   });
   res.json(result);
@@ -419,6 +438,9 @@ app.post('/api/processes/:name/stdin', (req, res) => {
   if (!entry.proc.stdin || entry.proc.stdin.destroyed) {
     return res.status(400).json({ error: `${name} stdin is not available` });
   }
+  
+  entry.needsInput = false;
+  
   const input = req.body.input !== undefined ? req.body.input : (typeof req.body === 'string' ? req.body : '');
   // Send exactly \r (Return key payload) because Raw mode drops \n and \r\n can confuse TUI prompts
   entry.proc.stdin.write(input + '\r');
