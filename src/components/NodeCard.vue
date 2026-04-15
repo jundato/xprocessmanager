@@ -12,6 +12,7 @@
       <div class="card-name">
         <i :class="[typeIcon, 'node-type-icon', node.status]" :title="node.type"></i>
         {{ node.name }}
+        <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="margin-left: 8px; color: #fbbf24;" title="Waiting for input..."></i>
       </div>
       <div class="card-actions">
         <template v-if="node.status === 'running'">

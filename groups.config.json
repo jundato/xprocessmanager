@@ -1,19 +1,15 @@
 [
   {
+    "name": "deployment",
+    "color": "#5b52e0"
+  },
+  {
     "name": "infra",
     "color": "#a78bfa"
   },
   {
-    "name": "web",
-    "color": "#f1fb60"
-  },
-  {
     "name": "devs",
     "color": "#001eff"
-  },
-  {
-    "name": "backend",
-    "color": "#ff4d4d"
   },
   {
     "name": "design",

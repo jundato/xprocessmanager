@@ -25,7 +25,33 @@
       <template v-if="form.type !== 'desk'">
         <div class="form-group">
           <label>Command</label>
-          <input v-model="form.command" type="text" placeholder="pwsh, node, docker, npm..." />
+          <div style="display: flex; gap: 6px; position: relative">
+            <input v-model="form.command" type="text" placeholder="pwsh, node, docker, npm..." style="flex: 1" />
+            <button
+              v-if="form.type === 'agent'"
+              type="button"
+              class="btn-ghost cmd-template-btn"
+              @click.stop="toggleTemplateMenu"
+              title="Fill from template"
+              style="white-space: nowrap; flex-shrink: 0;"
+            >
+              <i class="fa-solid fa-wand-magic-sparkles" style="margin-right: 5px"></i>Template
+            </button>
+            <div v-if="templateMenuOpen" class="cmd-template-menu" @click.stop>
+              <div
+                v-for="tpl in commandTemplates"
+                :key="tpl.label"
+                class="cmd-template-item"
+                @click="applyTemplate(tpl)"
+              >
+                <i :class="tpl.icon" class="cmd-template-icon"></i>
+                <div>
+                  <div class="cmd-template-name">{{ tpl.label }}</div>
+                  <div class="cmd-template-desc">{{ tpl.description }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="form-group">
           <label>Arguments</label>
@@ -57,8 +83,11 @@
         </select>
       </div>
       <div class="modal-actions" style="justify-content: space-between">
-        <div v-if="isEditing">
+        <div v-if="isEditing" style="display: flex; gap: 8px;">
           <button class="btn-delete" @click="handleRemove">Remove Node</button>
+          <button class="btn-ghost" @click="handleClone" style="color: var(--purple)">
+            <i class="fa-solid fa-clone" style="margin-right: 6px"></i>Clone
+          </button>
         </div>
         <div style="display: flex; gap: 8px; margin-left: auto">
           <button class="btn-ghost" @click="$emit('close')">Cancel</button>
@@ -70,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, computed } from 'vue'
+import { ref, reactive, watch, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '../composables/useApi.js'
 
 const props = defineProps({
@@ -78,9 +107,10 @@ const props = defineProps({
   editingName: { type: String, default: null },
   groupNames: { type: Array, default: () => ['other'] },
   nodes: { type: Array, default: () => [] },
+  cloneData: { type: Object, default: null },
 })
 
-const emit = defineEmits(['close', 'submit', 'remove'])
+const emit = defineEmits(['close', 'submit', 'remove', 'clone'])
 
 const overlayMouseDown = ref(false)
 function handleOverlayClick() {
@@ -109,10 +139,54 @@ const form = reactive({
 
 watch(() => form.type, (type) => {
   form.usePty = type === 'agent'
+  if (type !== 'agent') templateMenuOpen.value = false
 })
 
 const resolvedCwd = ref(null)
 const browsing = ref(false)
+
+// ── Command Templates ───────────────────────
+const templateMenuOpen = ref(false)
+
+const commandTemplates = [
+  {
+    label: 'Claude',
+    description: 'claude CLI agent',
+    icon: 'fa-solid fa-robot',
+    command: 'claude',
+    argsRaw: '',
+    type: 'agent',
+    usePty: true,
+  },
+  {
+    label: 'Gemini',
+    description: '/opt/homebrew/bin/node + gemini binary',
+    icon: 'fa-solid fa-gem',
+    command: '/opt/homebrew/bin/node',
+    argsRaw: '/opt/homebrew/bin/gemini',
+    type: 'agent',
+    usePty: true,
+  },
+]
+
+function toggleTemplateMenu() {
+  templateMenuOpen.value = !templateMenuOpen.value
+}
+
+function applyTemplate(tpl) {
+  form.command = tpl.command
+  form.argsRaw = tpl.argsRaw
+  form.type = tpl.type
+  form.usePty = tpl.usePty
+  templateMenuOpen.value = false
+}
+
+function closeTemplateMenu(e) {
+  templateMenuOpen.value = false
+}
+
+onMounted(() => document.addEventListener('click', closeTemplateMenu))
+onUnmounted(() => document.removeEventListener('click', closeTemplateMenu))
 
 async function browseDirectory() {
   browsing.value = true
@@ -145,6 +219,14 @@ watch(() => props.show, async (val) => {
     form.group = config.group || props.groupNames[0] || 'other'
     form.usePty = config.type === 'agent' ? true : !!config.usePty
     resolvedCwd.value = proc?.resolvedCwd || null
+  } else if (props.cloneData) {
+    form.name = props.cloneData.name
+    form.command = props.cloneData.command || ''
+    form.argsRaw = props.cloneData.argsRaw || ''
+    form.cwd = props.cloneData.cwd || ''
+    form.type = props.cloneData.type || 'service'
+    form.group = props.cloneData.group || props.groupNames[0] || 'other'
+    form.usePty = !!props.cloneData.usePty
   } else {
     form.name = ''
     form.command = ''
@@ -182,5 +264,17 @@ function handleSubmit() {
 
 function handleRemove() {
   emit('remove', props.editingName)
+}
+
+function handleClone() {
+  emit('clone', {
+    name: form.name + '-copy',
+    command: form.command,
+    argsRaw: form.argsRaw,
+    cwd: form.cwd,
+    type: form.type,
+    group: form.group,
+    usePty: form.usePty,
+  })
 }
 </script>
