@@ -82,6 +82,41 @@
           <option v-for="g in groupNames" :key="g" :value="g">{{ g }}</option>
         </select>
       </div>
+      <div v-if="form.type === 'script'" class="form-group">
+        <label>On Success — Trigger Nodes</label>
+        <div class="on-success-chips">
+          <span v-for="n in form.onSuccess" :key="n" class="on-success-chip">
+            <span class="group-dot" :style="{ background: nodeColor(n) }"></span>
+            <span>{{ n }}</span>
+            <button type="button" class="chip-remove" @click="removeTrigger(n)" aria-label="Remove">×</button>
+          </span>
+          <span v-if="!form.onSuccess.length" class="hint" style="padding: 4px 0">None — exits won't chain.</span>
+        </div>
+        <div class="trigger-select" @click.stop>
+          <button
+            type="button"
+            class="trigger-select-btn"
+            :disabled="!onSuccessOptions.length"
+            @click="toggleTriggerMenu"
+          >
+            <span>{{ onSuccessOptions.length ? '+ Add trigger…' : 'No nodes available' }}</span>
+            <i class="fa-solid fa-chevron-down" style="font-size: 10px; opacity: 0.6"></i>
+          </button>
+          <div v-if="triggerMenuOpen" class="trigger-select-menu">
+            <div
+              v-for="opt in onSuccessOptions"
+              :key="opt.name"
+              class="trigger-select-item"
+              @click="selectTrigger(opt.name)"
+            >
+              <span class="group-dot" :style="{ background: opt.color }"></span>
+              <span>{{ opt.name }}</span>
+              <span v-if="opt.group" class="trigger-select-group">({{ opt.group }})</span>
+            </div>
+          </div>
+        </div>
+        <div class="hint">On clean exit (code 0), all selected nodes are triggered in order.</div>
+      </div>
       <div class="modal-actions" style="justify-content: space-between">
         <div v-if="isEditing" style="display: flex; gap: 8px;">
           <button class="btn-delete" @click="handleRemove">Remove Node</button>
@@ -106,6 +141,7 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   editingName: { type: String, default: null },
   groupNames: { type: Array, default: () => ['other'] },
+  colorMap: { type: Object, default: () => ({}) },
   nodes: { type: Array, default: () => [] },
   cloneData: { type: Object, default: null },
 })
@@ -135,11 +171,48 @@ const form = reactive({
   type: 'service',
   group: 'other',
   usePty: false,
+  onSuccess: [],
 })
+
+function nodeGroup(name) {
+  const n = (props.nodes || []).find((x) => x.name === name)
+  return n?.group || ''
+}
+function nodeColor(name) {
+  const g = nodeGroup(name)
+  return (props.colorMap && props.colorMap[g]) || 'var(--muted, #888)'
+}
+
+const onSuccessOptions = computed(() =>
+  (props.nodes || [])
+    .filter((n) => n.name && n.name !== form.name && !form.onSuccess.includes(n.name))
+    .map((n) => ({ name: n.name, group: n.group, color: nodeColor(n.name) }))
+)
+
+function addTrigger(name) {
+  if (!name) return
+  if (!form.onSuccess.includes(name)) form.onSuccess.push(name)
+}
+function removeTrigger(name) {
+  form.onSuccess = form.onSuccess.filter((n) => n !== name)
+}
+
+const triggerMenuOpen = ref(false)
+function toggleTriggerMenu() {
+  triggerMenuOpen.value = !triggerMenuOpen.value
+}
+function selectTrigger(name) {
+  addTrigger(name)
+  triggerMenuOpen.value = false
+}
+function closeTriggerMenu() {
+  triggerMenuOpen.value = false
+}
 
 watch(() => form.type, (type) => {
   form.usePty = type === 'agent'
   if (type !== 'agent') templateMenuOpen.value = false
+  if (type !== 'script') form.onSuccess = []
 })
 
 const resolvedCwd = ref(null)
@@ -194,8 +267,12 @@ function closeTemplateMenu(e) {
   templateMenuOpen.value = false
 }
 
-onMounted(() => document.addEventListener('click', closeTemplateMenu))
-onUnmounted(() => document.removeEventListener('click', closeTemplateMenu))
+function closeAllMenus() {
+  closeTemplateMenu()
+  closeTriggerMenu()
+}
+onMounted(() => document.addEventListener('click', closeAllMenus))
+onUnmounted(() => document.removeEventListener('click', closeAllMenus))
 
 async function browseDirectory() {
   browsing.value = true
@@ -227,6 +304,9 @@ watch(() => props.show, async (val) => {
     form.type = config.type || 'service'
     form.group = config.group || props.groupNames[0] || 'other'
     form.usePty = config.type === 'agent' ? true : !!config.usePty
+    form.onSuccess = Array.isArray(config.onSuccess)
+      ? [...config.onSuccess]
+      : (config.onSuccess ? [config.onSuccess] : [])
     resolvedCwd.value = proc?.resolvedCwd || null
   } else if (props.cloneData) {
     form.name = props.cloneData.name
@@ -236,6 +316,9 @@ watch(() => props.show, async (val) => {
     form.type = props.cloneData.type || 'service'
     form.group = props.cloneData.group || props.groupNames[0] || 'other'
     form.usePty = !!props.cloneData.usePty
+    form.onSuccess = Array.isArray(props.cloneData.onSuccess)
+      ? [...props.cloneData.onSuccess]
+      : (props.cloneData.onSuccess ? [props.cloneData.onSuccess] : [])
   } else {
     form.name = ''
     form.command = ''
@@ -244,6 +327,7 @@ watch(() => props.show, async (val) => {
     form.type = 'service'
     form.group = props.groupNames[0] || 'other'
     form.usePty = false
+    form.onSuccess = []
   }
 })
 
@@ -267,6 +351,7 @@ function handleSubmit() {
     type: form.type,
     group: form.group,
     usePty: form.usePty,
+    onSuccess: form.type === 'script' && form.onSuccess.length > 0 ? [...form.onSuccess] : undefined,
   }
   emit('submit', { data, isEditing: isEditing.value, editingName: props.editingName })
 }
@@ -284,6 +369,98 @@ function handleClone() {
     type: form.type,
     group: form.group,
     usePty: form.usePty,
+    onSuccess: [...form.onSuccess],
   })
 }
 </script>
+
+<style scoped>
+.on-success-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-height: 28px;
+}
+.on-success-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  background: var(--surface-2, #2a2a2a);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 14px;
+  font-size: 12px;
+}
+.group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.chip-remove {
+  background: transparent;
+  border: 0;
+  color: var(--muted, #888);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+}
+.chip-remove:hover {
+  color: var(--danger, #e66);
+}
+.trigger-select {
+  position: relative;
+}
+.trigger-select-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--surface-2, #2a2a2a);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  color: var(--text, #ddd);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.trigger-select-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.trigger-select-btn:not(:disabled):hover {
+  border-color: var(--border-strong, #555);
+}
+.trigger-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--surface-2, #2a2a2a);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.trigger-select-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.trigger-select-item:hover {
+  background: var(--surface-3, #333);
+}
+.trigger-select-group {
+  color: var(--muted, #888);
+  font-size: 12px;
+}
+</style>

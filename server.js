@@ -243,6 +243,29 @@ function appendLog(entry, source, data) {
   }
 }
 
+function normalizeOnSuccess(value) {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    const arr = value.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim());
+    return arr.length > 0 ? arr : undefined;
+  }
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return undefined;
+}
+
+function triggerOnSuccess(entry, config) {
+  if (!config.onSuccess) return;
+  const targets = Array.isArray(config.onSuccess) ? config.onSuccess : [config.onSuccess];
+  for (const target of targets) {
+    if (!target) continue;
+    appendLog(entry, 'system', `onSuccess: triggering "${target}"`);
+    setImmediate(() => {
+      const result = startProcess(target);
+      if (result && result.error) appendLog(entry, 'system', `onSuccess "${target}" failed: ${result.error}`);
+    });
+  }
+}
+
 function startProcess(name) {
   const config = processConfigs.find((c) => c.name === name);
   if (!config) return { error: `Unknown process: ${name}` };
@@ -298,7 +321,8 @@ function startProcess(name) {
       });
 
       proc.onExit(({ exitCode }) => {
-        if (entry.status !== 'stopping') {
+        const wasStopping = entry.status === 'stopping';
+        if (!wasStopping) {
           entry.status = exitCode === 0 ? 'stopped' : 'errored';
         } else {
           entry.status = 'stopped';
@@ -307,6 +331,7 @@ function startProcess(name) {
         entry.proc = null;
         entry.ptyProc = null;
         disconnectPtyClients(name);
+        if (!wasStopping && exitCode === 0) triggerOnSuccess(entry, config);
       });
     } else {
       console.log(`[xpm] Spawning: ${config.command} ${JSON.stringify(resolvedArgs)} cwd=${resolvedCwd || '(none)'}`);
@@ -335,7 +360,8 @@ function startProcess(name) {
       });
 
       proc.on('close', (code) => {
-        if (entry.status !== 'stopping') {
+        const wasStopping = entry.status === 'stopping';
+        if (!wasStopping) {
           entry.status = code === 0 ? 'stopped' : 'errored';
         } else {
           entry.status = 'stopped';
@@ -343,6 +369,7 @@ function startProcess(name) {
         appendLog(entry, 'system', `Exited with code ${code}`);
         entry.proc = null;
         disconnectPtyClients(name);
+        if (!wasStopping && code === 0) triggerOnSuccess(entry, config);
       });
     }
   } catch (err) {
@@ -621,6 +648,8 @@ app.put('/api/processes/:name/file', (req, res) => {
   const resolvedCwd = resolveTemplate(config.cwd);
   const filePath = req.body.path;
   const content = req.body.content;
+  const encoding = req.body.encoding || 'utf-8';
+  
   if (!filePath || content == null) return res.status(400).json({ error: 'path and content are required' });
 
   const fullPath = path.resolve(resolvedCwd, filePath);
@@ -629,7 +658,7 @@ app.put('/api/processes/:name/file', (req, res) => {
   }
 
   try {
-    fs.writeFileSync(fullPath, content, 'utf-8');
+    fs.writeFileSync(fullPath, content, encoding);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -898,6 +927,8 @@ app.post('/api/config/import', (req, res) => {
     if (item.cwd) entry.cwd = item.cwd;
     if (item.stopCommand) entry.stopCommand = item.stopCommand;
     if (item.usePty !== undefined) entry.usePty = !!item.usePty;
+    const onSuccessNormalized = normalizeOnSuccess(item.onSuccess);
+    if (onSuccessNormalized !== undefined) entry.onSuccess = onSuccessNormalized;
     processConfigs.push(entry);
     added.push(item.name);
   }
@@ -906,7 +937,7 @@ app.post('/api/config/import', (req, res) => {
 });
 
 app.post('/api/config', (req, res) => {
-  const { name, command, args, cwd, type, group, stopCommand, usePty } = req.body;
+  const { name, command, args, cwd, type, group, stopCommand, usePty, onSuccess } = req.body;
   if (!name || !command) {
     return res.status(400).json({ error: 'name and command are required' });
   }
@@ -917,6 +948,8 @@ app.post('/api/config', (req, res) => {
   if (cwd) entry.cwd = cwd;
   if (stopCommand) entry.stopCommand = stopCommand;
   if (usePty !== undefined) entry.usePty = !!usePty;
+  const onSuccessNormalized = normalizeOnSuccess(onSuccess);
+  if (onSuccessNormalized !== undefined) entry.onSuccess = onSuccessNormalized;
   processConfigs.push(entry);
   saveConfig();
   res.json({ ok: true });
@@ -936,7 +969,7 @@ app.put('/api/config/:name', (req, res) => {
   if (idx === -1) {
     return res.status(404).json({ error: `Process "${oldName}" not found` });
   }
-  const { name: newName, command, args, cwd, type, group, stopCommand, usePty } = req.body;
+  const { name: newName, command, args, cwd, type, group, stopCommand, usePty, onSuccess } = req.body;
   if (!command) {
     return res.status(400).json({ error: 'command is required' });
   }
@@ -948,6 +981,8 @@ app.put('/api/config/:name', (req, res) => {
   if (cwd) updated.cwd = cwd;
   if (stopCommand) updated.stopCommand = stopCommand;
   if (usePty !== undefined) updated.usePty = !!usePty;
+  const onSuccessNormalized = normalizeOnSuccess(onSuccess);
+  if (onSuccessNormalized !== undefined) updated.onSuccess = onSuccessNormalized;
   processConfigs[idx] = updated;
   saveConfig();
 

@@ -84,6 +84,7 @@
     :show="showNodeModal"
     :editing-name="editingNodeName"
     :group-names="groupNames"
+    :color-map="colorMap"
     :nodes="nodeStore.nodes.value"
     :clone-data="cloneFormData"
     @close="closeNodeModal"
@@ -490,9 +491,19 @@ watch(() => logStore.selectedNode.value, () => {
   })
 })
 
-// ── Window resize handler ───────────────────
+// ── Window and Global Drag/Drop handlers ───────────────────
 function onResize() {
   popoverStore.onWindowResize()
+}
+
+function onGlobalDragOver(ev) {
+  ev.preventDefault()
+  ev.stopPropagation()
+}
+
+function onGlobalDrop(ev) {
+  ev.preventDefault()
+  ev.stopPropagation()
 }
 
 // ── Lifecycle ───────────────────────────────
@@ -500,10 +511,14 @@ onMounted(async () => {
   await nodeStore.refresh()
   await applyPollIntervals()
   window.addEventListener('resize', onResize)
+  document.addEventListener('dragover', onGlobalDragOver, true)
+  document.addEventListener('drop', onGlobalDrop, true)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
+  document.removeEventListener('dragover', onGlobalDragOver, true)
+  document.removeEventListener('drop', onGlobalDrop, true)
   nodeStore.stopPolling()
   logStore.stopLogPolling()
 })

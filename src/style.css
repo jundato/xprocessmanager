@@ -1929,3 +1929,8 @@ button:active {
 .log-line span {
   display: inline;
 }
+.xterm-container.drag-over {
+  background: rgba(96, 165, 250, 0.1);
+  outline: 2px dashed var(--blue);
+  outline-offset: -4px;
+}
