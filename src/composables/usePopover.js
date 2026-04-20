@@ -208,8 +208,12 @@ export function usePopover() {
     }
     // Passive hover — skip if already pinned
     if (pinnedPopovers.has(name)) return
-    cancelPopoverHide()
-    if (popoverVisible.value && popoverName.value === name) return
+    // Only cancel a pending hide if the visible popover is for this same card.
+    // Otherwise, let the existing popover hide while we schedule this card's show.
+    if (popoverVisible.value && popoverName.value === name) {
+      cancelPopoverHide()
+      return
+    }
     clearTimeout(hoverShowTimer)
     hoverShowTimer = setTimeout(() => {
       hoverShowTimer = null
@@ -222,11 +226,12 @@ export function usePopover() {
       removePinnedPopover(name)
       return
     }
-    if (name && popoverName.value !== name) return
     if (pinnedPopovers.has(name)) return
     clearTimeout(hoverShowTimer)
     hoverShowTimer = null
-    schedulePopoverHide()
+    if (popoverVisible.value) {
+      schedulePopoverHide()
+    }
   }
 
   function onWindowResize() {

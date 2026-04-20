@@ -3,6 +3,8 @@
     class="xterm-panel"
     :class="{ hidden: !nodeName, dragging }"
     :style="{ height: panelHeight + 'px' }"
+    @dragover.prevent
+    @drop.prevent
   >
     <div
       class="log-resize-handle"
@@ -16,8 +18,13 @@
     <div
       ref="termContainerRef"
       class="xterm-container"
+      :class="{ 'drag-over': dragOverTerminal }"
       tabindex="0"
       @click="focusTerminal"
+      @dragenter.prevent.stop="onDragEnter"
+      @dragover.prevent.stop="onDragOver"
+      @dragleave.prevent.stop="onDragLeave"
+      @drop.prevent.stop="onDrop"
     ></div>
   </div>
 </template>
@@ -27,6 +34,7 @@ import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { api } from '../composables/useApi'
 
 const props = defineProps({
   nodeName: { type: String, default: null },
@@ -37,6 +45,8 @@ const emit = defineEmits(['close', 'resize'])
 
 const termContainerRef = ref(null)
 const dragging = ref(false)
+const dragOverTerminal = ref(false)
+let dragCounter = 0
 
 let term = null
 let fitAddon = null
@@ -243,5 +253,88 @@ function startDragTouch() {
   }
   document.addEventListener('touchmove', onMove)
   document.addEventListener('touchend', onEnd)
+}
+
+// File Drag & Drop
+function onDragEnter(ev) {
+  dragCounter++
+  dragOverTerminal.value = true
+}
+
+function onDragOver(ev) {
+  if (ev.dataTransfer) {
+    ev.dataTransfer.dropEffect = 'copy'
+  }
+}
+
+function onDragLeave() {
+  dragCounter--
+  if (dragCounter === 0) {
+    dragOverTerminal.value = false
+  }
+}
+
+async function onDrop(ev) {
+  dragCounter = 0
+  dragOverTerminal.value = false
+  const files = ev.dataTransfer.files
+  if (!files.length || !props.nodeName) return
+
+  for (const file of files) {
+    try {
+      if (term) term.write(`\r\n\x1b[33m[xpm] Uploading ${file.name}...\x1b[0m\r\n`)
+      
+      const isImage = file.type.startsWith('image/')
+      let content
+      let encoding = 'utf-8'
+
+      if (isImage) {
+        content = await readFileAsBase64(file)
+        encoding = 'base64'
+      } else {
+        content = await readFileAsText(file)
+      }
+
+      await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file`, 'PUT', {
+        path: file.name,
+        content,
+        encoding
+      })
+
+      if (term) {
+        term.write(`\x1b[32m[xpm] Uploaded ${file.name} successfully.\x1b[0m\r\n`)
+        term.write(`\x1b[36m[xpm] You can now reference it with @${file.name}\x1b[0m\r\n`)
+        term.focus()
+        // Automatically start typing the reference for convenience
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'input', data: `@${file.name} ` }))
+        }
+      }
+    } catch (err) {
+      if (term) term.write(`\x1b[31m[xpm] Failed to upload ${file.name}: ${err.message}\x1b[0m\r\n`)
+    }
+  }
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsText(file)
+  })
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      const base64 = result.split(',')[1]
+      resolve(base64)
+    }
+    reader.onerror = () => reject(new Error('Failed to read binary file'))
+    reader.readAsDataURL(file)
+  })
 }
 </script>
