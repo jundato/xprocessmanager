@@ -95,18 +95,21 @@ export function useNodes() {
   }
 
   async function startNode(name) {
-    await api(`/api/processes/${encodeURIComponent(name)}/start`, 'POST')
+    const res = await api(`/api/processes/${encodeURIComponent(name)}/start`, 'POST')
     await refresh(true)
+    return res
   }
 
   async function stopNode(name) {
-    await api(`/api/processes/${encodeURIComponent(name)}/stop`, 'POST')
+    const res = await api(`/api/processes/${encodeURIComponent(name)}/stop`, 'POST')
     await refresh(true)
+    return res
   }
 
   async function restartNode(name) {
-    await api(`/api/processes/${encodeURIComponent(name)}/restart`, 'POST')
+    const res = await api(`/api/processes/${encodeURIComponent(name)}/restart`, 'POST')
     await refresh(true)
+    return res
   }
 
   async function startAll() {

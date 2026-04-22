@@ -929,6 +929,21 @@ app.post('/api/processes/:name/git/pull', async (req, res) => {
   }
 });
 
+app.post('/api/processes/:name/git/push', async (req, res) => {
+  const name = req.params.name;
+  const config = processConfigs.find(c => c.name === name);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+  
+  const resolvedCwd = resolveTemplate(config.cwd);
+  try {
+    execFileSync('git', ['push'], { cwd: resolvedCwd, timeout: 30000 });
+    res.json({ ok: true });
+  } catch (err) {
+    const msg = err.stderr || err.message;
+    res.status(500).json({ error: `Git push failed: ${msg}` });
+  }
+});
+
 app.post('/api/browse-directory', (req, res) => {
   const startDir = req.body.startDir || os.homedir();
   const platform = os.platform();

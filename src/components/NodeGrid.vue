@@ -66,6 +66,7 @@
           @branch-click="$emit('branch-click', $event)"
           @open-workspace="$emit('open-workspace', $event)"
           @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
         />
       </div>
     </template>
@@ -88,7 +89,7 @@ const props = defineProps({
   viewMode: { type: String, default: 'group' },
 })
 
-const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'reorder', 'reorder-groups', 'move-to-group', 'branch-click', 'open-workspace', 'pull-git', 'start-group', 'stop-group'])
+const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'reorder', 'reorder-groups', 'move-to-group', 'branch-click', 'open-workspace', 'pull-git', 'push-git', 'start-group', 'stop-group'])
 
 // ── Collapsing Groups ──────────────────────
 const collapsedGroups = reactive(JSON.parse(localStorage.getItem('xpm-collapsed-groups') || '{}'))

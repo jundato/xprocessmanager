@@ -6,11 +6,11 @@
     </div>
     <div class="header-actions">
 
-      <button class="btn-ghost" @click="$emit('add-node')">
-        <i class="fa-solid fa-plus mr-1"></i> Node
+      <button class="btn-ghost" @click="$emit('add-node')" title="Add Node">
+        <i class="fa-solid fa-plus"></i>
       </button>
       <button class="btn-ghost" :class="{ spinning: checkingRemote }" @click="$emit('check-remote-updates')" title="Check all nodes for remote updates">
-        <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Fetch
+        <i class="fa-solid fa-arrows-rotate"></i>
       </button>
       <button
         type="button"

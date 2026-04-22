@@ -68,6 +68,14 @@
           <i class="fa-solid fa-cloud-arrow-down"></i>
         </button>
         <button
+          v-if="gitRemoteStatus === 'ahead'"
+          class="btn-git-action btn-push"
+          @click.stop="pushGitChanges"
+          title="Push updates"
+        >
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+        </button>
+        <button
           class="btn-git-action btn-refresh"
           :class="{ spinning: gitRemoteStatus === 'checking' }"
           @click.stop="checkGitStatus"
@@ -89,6 +97,8 @@ import { ref, computed, onUnmounted } from 'vue'
 import { api } from '../composables/useApi.js'
 import { useAlert } from '../composables/useAlert.js'
 
+import { useNotifications } from '../composables/useNotifications.js'
+
 const props = defineProps({
   node: { type: Object, required: true },
   borderColor: { type: String, default: '#4b5563' },
@@ -97,9 +107,10 @@ const props = defineProps({
   workspaceOpen: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'branch-click', 'open-workspace', 'pull-git'])
+const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'branch-click', 'open-workspace', 'pull-git', 'push-git'])
 
 const { showAlert } = useAlert()
+const { addNotification } = useNotifications()
 
 const cardRef = ref(null)
 const expanded = ref(false)
@@ -186,6 +197,7 @@ async function checkGitStatus() {
   } catch (err) {
     console.error('Failed to check git status:', err)
     gitRemoteStatus.value = 'error'
+    addNotification(`Failed to check git status for ${props.node.name}: ${err.message}`, 'error')
   }
 }
 
@@ -196,6 +208,17 @@ async function pullGitChanges() {
       checkGitStatus()
     } else {
       gitRemoteStatus.value = 'behind'
+    }
+  })
+}
+
+async function pushGitChanges() {
+  gitRemoteStatus.value = 'checking'
+  emit('push-git', props.node.name, (success) => {
+    if (success) {
+      checkGitStatus()
+    } else {
+      gitRemoteStatus.value = 'ahead'
     }
   })
 }

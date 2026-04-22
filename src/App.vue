@@ -47,6 +47,7 @@
       @branch-click="openBranchModal"
       @open-workspace="openWorkspaceModal"
       @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+      @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
       @start-group="handleStartGroup"
       @stop-group="handleStopGroup"
     />
@@ -129,6 +130,7 @@
   />
 
   <AlertModal />
+  <NotificationContainer />
 
 
 
@@ -164,6 +166,7 @@ import NodeModal from './components/NodeModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
 import AlertModal from './components/AlertModal.vue'
+import NotificationContainer from './components/NotificationContainer.vue'
 const WorkspaceModal = defineAsyncComponent(() => import('./components/WorkspaceModal.vue'))
 
 import { useNodes } from './composables/useNodes.js'
@@ -171,6 +174,7 @@ import { useLogs } from './composables/useLogs.js'
 import { usePopover } from './composables/usePopover.js'
 import { useSettings } from './composables/useSettings.js'
 import { useAlert } from './composables/useAlert.js'
+import { useNotifications } from './composables/useNotifications.js'
 import { api } from './composables/useApi.js'
 
 
@@ -181,6 +185,7 @@ const logStore = useLogs()
 const popoverStore = usePopover()
 const settingsStore = useSettings()
 const { showAlert } = useAlert()
+const { addNotification } = useNotifications()
 
 // ── Computed ────────────────────────────────
 const selectedIsPty = computed(() => {
@@ -315,25 +320,56 @@ function handleNodeClone(cloneData) {
 
 // ── Node Actions ───────────────────────────
 async function handleStart(name) {
-  await nodeStore.startNode(name)
+  const res = await nodeStore.startNode(name)
+  if (res?.error) {
+    addNotification(`Failed to start ${name}: ${res.error}`, 'error')
+  } else {
+    addNotification(`Started ${name}`)
+  }
 }
 
 async function handleStop(name) {
-  await nodeStore.stopNode(name)
+  const res = await nodeStore.stopNode(name)
+  if (res?.error) {
+    addNotification(`Failed to stop ${name}: ${res.error}`, 'error')
+  } else {
+    addNotification(`Stopped ${name}`)
+  }
 }
 
 async function handleRestart(name) {
-  await nodeStore.restartNode(name)
+  const res = await nodeStore.restartNode(name)
+  if (res?.error) {
+    addNotification(`Failed to restart ${name}: ${res.error}`, 'error')
+  } else {
+    addNotification(`Restarted ${name}`)
+  }
 }
 
 async function handleStartGroup(group) {
   const nodes = nodeStore.nodes.value.filter(n => (n.group || 'other') === group && n.status !== 'running')
-  await Promise.all(nodes.map(n => nodeStore.startNode(n.name)))
+  if (nodes.length === 0) return
+  addNotification(`Starting group: ${group}...`, 'info')
+  const results = await Promise.all(nodes.map(n => nodeStore.startNode(n.name)))
+  const failures = results.filter(r => r?.error)
+  if (failures.length > 0) {
+    addNotification(`Group ${group}: ${failures.length} failed to start`, 'error')
+  } else {
+    addNotification(`Group ${group} started successfully`)
+  }
 }
 
 async function handleStopGroup(group) {
   const nodes = nodeStore.nodes.value.filter(n => (n.group || 'other') === group && n.status === 'running')
-  await Promise.all(nodes.map(n => nodeStore.stopNode(n.name)))
+  if (nodes.length === 0) return
+  addNotification(`Stopping group: ${group}...`, 'info')
+  const results = await Promise.all(nodes.map(n => nodeStore.stopNode(n.name)))
+  const failures = results.filter(r => r?.error)
+  if (failures.length > 0) {
+    addNotification(`Group ${group}: ${failures.length} failed to stop`, 'error')
+  } else {
+    addNotification(`Group ${group} stopped successfully`)
+  }
 }
 
 // ── Branch Modal ────────────────────────────
@@ -397,8 +433,10 @@ async function handleCheckoutBranch(branch, strategy = null) {
 
   if (res.error) {
     showAlert('Branch Error', res.error)
+    addNotification(`Checkout failed: ${res.error}`, 'error')
     return
   }
+  addNotification(`Successfully checked out ${branch}`)
   closeBranchModal()
   await nodeStore.refresh(true)
 }
@@ -416,8 +454,23 @@ async function handlePullGitChanges(name, strategy = null) {
 
   if (res.error) {
     showAlert('Pull Error', res.error)
+    addNotification(`Pull failed for ${name}: ${res.error}`, 'error')
     return false
   }
+  addNotification(`Successfully pulled updates for ${name}`)
+  await nodeStore.refresh(true)
+  return true
+}
+
+async function handlePushGitChanges(name) {
+  const res = await api(`/api/processes/${name}/git/push`, 'POST')
+  
+  if (res.error) {
+    showAlert('Push Error', res.error)
+    addNotification(`Push failed for ${name}: ${res.error}`, 'error')
+    return false
+  }
+  addNotification(`Successfully pushed updates for ${name}`)
   await nodeStore.refresh(true)
   return true
 }

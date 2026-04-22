@@ -461,6 +461,18 @@ button:active {
   border-color: var(--green);
 }
 
+.btn-push {
+  background: rgba(96, 165, 250, 0.1);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.btn-push:hover {
+  background: var(--blue);
+  color: #000;
+  border-color: var(--blue);
+}
+
 .btn-refresh:hover {
   color: var(--blue);
   border-color: var(--blue);
