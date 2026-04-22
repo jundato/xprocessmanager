@@ -9,3 +9,6 @@ __azurite_db_queue__.json
 __azurite_db_blob_extent__.json
 __azurite_db_blob__.json
 dist
+startup-error.txt
+startup-log.txt
+tools.config.json
