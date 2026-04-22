@@ -14,9 +14,18 @@
       <span style="font-size: 11px; color: var(--text-dim); margin-left: auto; margin-right: 12px">
         {{ lastRefresh }}
       </span>
-      <button v-if="node?.cwd" class="btn-ghost btn-icon" :class="{ active: workspaceOpen }" @click="$emit('open-workspace', node)" style="margin-right: 4px" title="Toggle Workspace">
-        <i :class="node?.type === 'agent' ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'"></i>
-      </button>
+      <CardActions
+        v-if="node"
+        style="margin-right: 12px; gap: 8px;"
+        :node="node"
+        :workspace-open="workspaceOpen"
+        :terminal-open="true"
+        :show-edit="false"
+        @start="$emit('start', $event)"
+        @stop="$emit('stop', $event)"
+        @restart="$emit('restart', $event)"
+        @open-workspace="$emit('open-workspace', $event)"
+      />
       <button class="btn-ghost btn-icon" @click="$emit('clear')" style="margin-right: 4px" title="Clear Logs">
         <i class="fa-solid fa-eraser"></i>
       </button>
@@ -50,6 +59,7 @@
 <script setup>
 import { ref, watch, nextTick } from 'vue'
 import { AnsiUp } from 'ansi_up'
+import CardActions from './CardActions.vue'
 
 const ansiUp = new AnsiUp()
 function formatAnsi(text) {
@@ -66,7 +76,7 @@ const props = defineProps({
   workspaceOpen: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['close', 'resize', 'clear', 'send-stdin', 'open-workspace'])
+const emit = defineEmits(['close', 'resize', 'clear', 'send-stdin', 'open-workspace', 'start', 'stop', 'restart'])
 
 const logBodyRef = ref(null)
 const dragging = ref(false)

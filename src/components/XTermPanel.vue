@@ -13,37 +13,18 @@
     ></div>
     <div class="log-header">
       <span>Terminal — {{ nodeName }}</span>
-      <div class="log-actions" style="margin-left: auto; display: flex; gap: 8px; margin-right: 12px; align-items: center">
-        <template v-if="node?.status === 'running'">
-          <button class="btn-stop btn-icon" @click="$emit('stop', node?.name)" title="Stop"><i class="fa-solid fa-stop"></i></button>
-          <button class="btn-restart btn-icon" @click="$emit('restart', node?.name)" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
-        </template>
-        <template v-else>
-          <button class="btn-start btn-icon" @click="$emit('start', node?.name)" title="Start"><i class="fa-solid fa-play"></i></button>
-          <div v-if="node?.type === 'agent' && isGemini" class="session-dropdown-container">
-            <button class="btn-sessions btn-icon" @click.stop="toggleSessions" title="Resume Session">
-              <i class="fa-solid fa-history"></i>
-            </button>
-            <div v-if="showSessions" class="session-dropdown" @click.stop>
-              <div class="session-dropdown-header">
-                Recent Sessions
-                <button class="btn-close-sessions" @click="showSessions = false">&times;</button>
-              </div>
-              <div v-if="loadingSessions" class="session-loading">Loading...</div>
-              <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
-              <div v-else class="session-list">
-                <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s.id)">
-                  <div class="session-title">{{ s.title }}</div>
-                  <div class="session-time">{{ s.time }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </template>
-        <button v-if="node?.cwd" class="btn-ghost btn-icon" :class="{ active: workspaceOpen }" @click="$emit('open-workspace', node)" title="Toggle Workspace">
-          <i :class="node?.type === 'agent' ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'"></i>
-        </button>
-      </div>
+      <CardActions
+        v-if="node"
+        style="margin-left: auto; margin-right: 12px; gap: 8px;"
+        :node="node"
+        :workspace-open="workspaceOpen"
+        :terminal-open="true"
+        :show-edit="false"
+        @start="$emit('start', $event)"
+        @stop="$emit('stop', $event)"
+        @restart="$emit('restart', $event)"
+        @open-workspace="$emit('open-workspace', $event)"
+      />
       <button class="btn-ghost btn-icon" @click="$emit('close')" title="Close Terminal">
         <i class="fa-solid fa-xmark"></i>
       </button>
@@ -68,64 +49,17 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { api } from '../composables/useApi'
+import CardActions from './CardActions.vue'
 
 const props = defineProps({
   node: { type: Object, default: null },
   panelHeight: { type: Number, default: 400 },
   workspaceOpen: { type: Boolean, default: false },
+  terminalWidth: { type: Number, default: 200 },
 })
 
 const nodeName = computed(() => props.node?.name)
 const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace'])
-
-const isGemini = computed(() => {
-  const cmd = String(props.node?.command || '').toLowerCase()
-  return cmd.includes('gemini')
-})
-
-const showSessions = ref(false)
-const loadingSessions = ref(false)
-const sessions = ref([])
-
-import { useAlert } from '../composables/useAlert.js'
-const { showAlert } = useAlert()
-
-async function toggleSessions() {
-  showSessions.value = !showSessions.value
-  if (showSessions.value) {
-    loadingSessions.value = true
-    try {
-      sessions.value = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/sessions`)
-    } catch (err) {
-      console.error('Failed to fetch sessions:', err)
-      showAlert('Error', 'Failed to fetch sessions.')
-    } finally {
-      loadingSessions.value = false
-    }
-  }
-}
-
-async function resumeSession(sessionId) {
-  try {
-    const result = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/resume/${sessionId}`, 'POST')
-    if (result && result.staleSession) {
-      try {
-        sessions.value = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/sessions`)
-      } catch {}
-      showAlert('Session unavailable', result.error)
-      return
-    }
-    if (result && result.error) {
-      showAlert('Error', `Failed to resume session: ${result.error}`)
-      return
-    }
-    showSessions.value = false
-    emit('start', nodeName.value)
-  } catch (err) {
-    console.error('Failed to resume session:', err)
-    showAlert('Error', `Failed to resume session: ${err.message}`)
-  }
-}
 
 const termContainerRef = ref(null)
 const dragging = ref(false)
@@ -287,19 +221,17 @@ watch(nodeName, async (name, oldName) => {
   }
 }, { immediate: false })
 
-const WIDE_COLS = 200
-
 function fitWide() {
   if (!fitAddon || !term || !term.element) return
   const dims = fitAddon.proposeDimensions()
   if (dims && dims.cols > 0 && dims.rows > 0) {
-    term.resize(WIDE_COLS, dims.rows)
+    term.resize(props.terminalWidth, dims.rows)
   } else {
     // Retry once if zero dimensions (often means container not yet visible)
     setTimeout(() => {
       if (!fitAddon || !term) return
       const d2 = fitAddon.proposeDimensions()
-      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(WIDE_COLS, d2.rows)
+      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(props.terminalWidth, d2.rows)
     }, 50)
   }
 }

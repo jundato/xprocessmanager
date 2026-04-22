@@ -13,6 +13,11 @@
           :class="{ active: activeTab === 'advanced' }"
           @click="activeTab = 'advanced'"
         >Advanced</button>
+        <button
+          class="settings-tab"
+          :class="{ active: activeTab === 'tools' }"
+          @click="activeTab = 'tools'"
+        >Tools</button>
       </div>
       <div class="modal-scroll">
         <!-- General Tab -->
@@ -143,6 +148,43 @@
                 @input="emit('update:maxLogLines', parseInt($event.target.value) || 500)"
               />
             </div>
+            <div class="setting-field">
+              <label>Terminal Width (Columns)</label>
+              <input
+                :value="terminalWidth"
+                type="number" min="40" max="500" step="10"
+                @input="emit('update:terminalWidth', parseInt($event.target.value) || 120)"
+              />
+              <div class="hint">Target column width for agent screens. Default: 120.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tools Tab -->
+        <div class="settings-tab-content" :class="{ active: activeTab === 'tools' }">
+          <div class="settings-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <div class="settings-section-title">External Tools</div>
+            <div class="env-note">
+              Configure external scripts or executables that can be launched from the workspace.
+              Stored in <code>tools.config.json</code>.
+            </div>
+            <div class="env-rows">
+              <div v-for="(row, i) in toolRows" :key="i" class="env-row" style="flex-wrap: wrap; gap: 8px; align-items: center;">
+                <input v-model="row.label" type="text" class="env-key" placeholder="Tool Label" style="flex: 1; min-width: 120px;" />
+                <div style="flex: 2; min-width: 200px; display: flex; gap: 4px;">
+                  <input v-model="row.path" type="text" class="env-val" placeholder="File Path" style="flex: 1;" />
+                  <button type="button" class="btn-ghost" style="padding: 4px 8px; font-size: 11px;" @click="emit('browse-tool', i)" title="Browse for file">
+                    <i class="fa-solid fa-folder-open"></i>
+                  </button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; user-select: none;">
+                  <input :id="'param-' + i" v-model="row.requiresParam" type="checkbox" />
+                  <label :for="'param-' + i" style="font-size: 12px; color: var(--text-dim);">Needs param</label>
+                </div>
+                <button type="button" class="btn-remove-row" @click="emit('remove-tool', i)">&times;</button>
+              </div>
+            </div>
+            <button type="button" class="btn-add-row" @click="emit('add-tool')">+ Add Tool</button>
           </div>
         </div>
       </div>
@@ -161,21 +203,24 @@ defineProps({
   show: { type: Boolean, default: false },
   envRows: { type: Array, default: () => [] },
   groupRows: { type: Array, default: () => [] },
+  toolRows: { type: Array, default: () => [] },
   logPollInterval: { type: Number, default: 500 },
   statusPollInterval: { type: Number, default: 3000 },
   popoverPollInterval: { type: Number, default: 1500 },
   port: { type: Number, default: 1337 },
   maxLogLines: { type: Number, default: 500 },
+  terminalWidth: { type: Number, default: 120 },
 })
 
 const emit = defineEmits([
   'close', 'save',
   'add-env', 'remove-env',
   'add-group', 'remove-group',
+  'add-tool', 'remove-tool', 'browse-tool',
   'reorder-groups',
   'import',
   'update:logPollInterval', 'update:statusPollInterval', 'update:popoverPollInterval',
-  'update:port', 'update:maxLogLines',
+  'update:port', 'update:maxLogLines', 'update:terminalWidth',
 ])
 
 const overlayMouseDown = ref(false)

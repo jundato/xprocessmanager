@@ -530,10 +530,88 @@ button:active {
   gap: 4px;
 }
 
-.card-actions,
-.btn-refresh {
+.card .card-actions,
+.card .btn-refresh {
   opacity: 0;
   transition: opacity 0.15s;
+}
+
+/* ── Tools Dropdown ───────────────────────── */
+.tools-dropdown-container {
+  position: relative;
+}
+
+.tools-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  overflow: hidden;
+  animation: fadeInDown 0.15s ease;
+  opacity: 1 !important;
+}
+
+.tools-dropdown-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface), white 3%);
+}
+
+.tool-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+}
+
+.tool-item:hover {
+  background: var(--surface2);
+}
+
+.tool-icon {
+  font-size: 14px;
+  color: var(--blue);
+  width: 16px;
+  text-align: center;
+}
+
+.tool-param-icon {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--yellow);
+  opacity: 0.7;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.btn-tools {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--card-color, var(--border));
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-tools:hover {
+  color: var(--blue);
+  border-color: var(--blue);
 }
 
 .card:hover .card-actions,

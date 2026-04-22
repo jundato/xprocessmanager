@@ -44,6 +44,7 @@ if (fs.existsSync(envConfigPath)) {
 }
 
 const groupsConfigPath = path.join(__dirname, 'groups.config.json');
+const toolsConfigPath = path.join(__dirname, 'tools.config.json');
 const DEFAULT_GROUP_DEFS = [
   { name: 'infra', color: '#a78bfa' },
   { name: 'frontend', color: '#60a5fa' },
@@ -113,8 +114,22 @@ if (groupList.length === 0) {
   groupList = [...DEFAULT_GROUP_DEFS];
 }
 
+let toolsList = [];
+if (fs.existsSync(toolsConfigPath)) {
+  try {
+    toolsList = JSON.parse(fs.readFileSync(toolsConfigPath, 'utf-8'));
+    if (!Array.isArray(toolsList)) toolsList = [];
+  } catch {
+    toolsList = [];
+  }
+}
+
 function saveGroupsConfig() {
   fs.writeFileSync(groupsConfigPath, JSON.stringify(groupList, null, 2) + '\n');
+}
+
+function saveToolsConfig() {
+  fs.writeFileSync(toolsConfigPath, JSON.stringify(toolsList, null, 2) + '\n');
 }
 
 function saveConfig() {
@@ -274,6 +289,16 @@ function getGeminiPath() {
   return 'gemini';
 }
 
+function getProcessEnv() {
+  const env = { ...process.env, PYTHONUNBUFFERED: '1', ...envVars };
+  if (envVars.PATH) {
+    // If the user provided a custom PATH, prepend it to the current PATH
+    // to ensure it takes precedence without losing standard system paths.
+    env.PATH = envVars.PATH + (process.env.PATH ? ':' + process.env.PATH : '');
+  }
+  return env;
+}
+
 function startProcess(name, resumeId = null) {
   const config = processConfigs.find((c) => c.name === name);
   if (!config) return { error: `Unknown process: ${name}` };
@@ -300,14 +325,7 @@ function startProcess(name, resumeId = null) {
     }
   }
 
-  const env = { ...process.env, PYTHONUNBUFFERED: '1', ...envVars };
-
-  
-  if (envVars.PATH) {
-    // If the user provided a custom PATH, prepend it to the current PATH
-    // to ensure it takes precedence without losing standard system paths.
-    env.PATH = envVars.PATH + (process.env.PATH ? ':' + process.env.PATH : '');
-  }
+  const env = getProcessEnv();
   let proc;
   const entry = {
     status: 'running',
@@ -477,6 +495,7 @@ app.get('/api/system', (req, res) => {
   res.json({
     port: systemConfig.port || 1337,
     maxLogLines: systemConfig.maxLogLines || 500,
+    terminalWidth: systemConfig.terminalWidth || 120,
     logPollInterval: systemConfig.logPollInterval || 500,
     statusPollInterval: systemConfig.statusPollInterval || 3000,
     popoverPollInterval: systemConfig.popoverPollInterval || 1500,
@@ -997,6 +1016,55 @@ app.post('/api/browse-directory', (req, res) => {
   }
 });
 
+app.post('/api/browse-file', (req, res) => {
+  const startDir = req.body.startDir || os.homedir();
+  const platform = os.platform();
+  let cmd, args;
+
+  if (platform === 'darwin') {
+    const script = `
+      set defaultDir to POSIX file "${startDir.replace(/"/g, '\\"')}"
+      try
+        set chosenFile to POSIX path of (choose file with prompt "Select Tool Executable" default location defaultDir)
+        return chosenFile
+      on error
+        return "__CANCELLED__"
+      end try
+    `;
+    cmd = 'osascript';
+    args = ['-e', script];
+  } else if (platform === 'win32') {
+    const psScript = `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.InitialDirectory = '${startDir.replace(/'/g, "''")}'; $f.Title = 'Select Tool Executable'; if ($f.ShowDialog() -eq 'OK') { $f.FileName } else { '__CANCELLED__' }`;
+    cmd = 'powershell';
+    args = ['-NoProfile', '-Command', psScript];
+  } else {
+    cmd = 'zenity';
+    args = ['--file-selection', '--title=Select Tool Executable', `--filename=${startDir}/`];
+  }
+
+  try {
+    const result = execFileSync(cmd, args, {
+      encoding: 'utf-8',
+      timeout: 60000,
+    }).trim();
+    if (!result || result === '__CANCELLED__') {
+      return res.json({ cancelled: true });
+    }
+    res.json({ path: result });
+  } catch (err) {
+    if (platform === 'linux') {
+      try {
+        const result = execFileSync('kdialog', ['--getopenfilename', startDir, '--title', 'Select Tool Executable'], {
+          encoding: 'utf-8',
+          timeout: 60000,
+        }).trim();
+        if (result) return res.json({ path: result });
+      } catch {}
+    }
+    res.json({ cancelled: true });
+  }
+});
+
 app.post('/api/start-all', (_req, res) => {
   const results = {};
   for (const config of processConfigs) {
@@ -1138,7 +1206,7 @@ app.put('/api/system', (req, res) => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return res.status(400).json({ error: 'Body must be a JSON object' });
   }
-  const allowed = ['port', 'maxLogLines', 'logPollInterval', 'statusPollInterval', 'popoverPollInterval'];
+  const allowed = ['port', 'maxLogLines', 'terminalWidth', 'logPollInterval', 'statusPollInterval', 'popoverPollInterval'];
   for (const key of allowed) {
     if (body[key] !== undefined) systemConfig[key] = body[key];
   }
@@ -1189,6 +1257,61 @@ app.put('/api/groups', (req, res) => {
   }
   groupList = out;
   saveGroupsConfig();
+  res.json({ ok: true });
+});
+
+app.get('/api/tools', (_req, res) => {
+  res.json(toolsList);
+});
+
+app.post('/api/processes/:name/tools/execute', (req, res) => {
+  const { toolLabel, param } = req.body;
+  const name = req.params.name;
+  const config = processConfigs.find(c => c.name === name);
+  if (!config) return res.status(404).json({ error: 'Process not found' });
+
+  const tool = toolsList.find(t => t.label === toolLabel);
+  if (!tool) return res.status(404).json({ error: 'Tool not found' });
+
+  const resolvedCwd = resolveTemplate(config.cwd) || process.cwd();
+  let cmd = tool.path;
+  
+  // Replace {param} in tool path if it exists, otherwise append it
+  if (cmd.includes('{param}')) {
+    cmd = cmd.replace('{param}', param || '');
+  } else if (param) {
+    cmd += ` ${param}`;
+  }
+
+  // Support {cwd} in tool path
+  if (cmd.includes('{cwd}')) {
+    cmd = cmd.replace('{cwd}', resolvedCwd);
+  }
+
+  console.log(`[xpm] Executing tool: ${cmd} in ${resolvedCwd}`);
+
+  exec(cmd, { cwd: resolvedCwd, env: getProcessEnv() }, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[xpm] Tool failed: ${error.message}`);
+      return res.json({ error: stderr || error.message });
+    }
+    res.json({ ok: true, output: stdout });
+  });
+});
+
+app.put('/api/tools', (req, res) => {
+  const body = req.body;
+  if (!Array.isArray(body)) {
+    return res.status(400).json({ error: 'Body must be a JSON array of tool objects' });
+  }
+  // Basic validation
+  const validated = body.filter(t => t && typeof t === 'object' && t.label && t.path);
+  toolsList = validated.map(t => ({
+    label: String(t.label).trim(),
+    path: String(t.path).trim(),
+    requiresParam: !!t.requiresParam
+  }));
+  saveToolsConfig();
   res.json({ ok: true });
 });
 

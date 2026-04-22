@@ -70,6 +70,7 @@
     v-if="selectedIsPty"
     :node="selectedNodeObject"
     :panel-height="logStore.logPanelHeight.value"
+    :terminal-width="settingsStore.sysTerminalWidth.value"
     :workspace-open="workspaceModalStore.nodeName === logStore.selectedNode.value"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
@@ -93,6 +94,9 @@
     @clear="logStore.clearLogs"
     @send-stdin="handleSendStdin"
     @open-workspace="openWorkspaceModal"
+    @start="handleStart"
+    @stop="handleStop"
+    @restart="handleRestart"
   />
 
   <NodeModal
@@ -131,6 +135,7 @@
 
   <AlertModal />
   <NotificationContainer />
+  <TaskOverlay />
 
 
 
@@ -138,17 +143,22 @@
     :show="settingsStore.showSettingsModal.value"
     :env-rows="settingsStore.envRows.value"
     :group-rows="settingsStore.groupRows.value"
+    :tool-rows="settingsStore.toolRows.value"
     v-model:log-poll-interval="settingsStore.sysLogPollInterval.value"
     v-model:status-poll-interval="settingsStore.sysStatusPollInterval.value"
     v-model:popover-poll-interval="settingsStore.sysPopoverPollInterval.value"
     v-model:port="settingsStore.sysPort.value"
     v-model:max-log-lines="settingsStore.sysMaxLogLines.value"
+    v-model:terminal-width="settingsStore.sysTerminalWidth.value"
     @close="settingsStore.closeSettings"
     @save="handleSaveSettings"
     @add-env="settingsStore.addEnvRow"
     @remove-env="settingsStore.removeEnvRow"
     @add-group="settingsStore.addGroupRow"
     @remove-group="settingsStore.removeGroupRow"
+    @add-tool="settingsStore.addToolRow"
+    @remove-tool="settingsStore.removeToolRow"
+    @browse-tool="settingsStore.browseFile"
     @reorder-groups="settingsStore.reorderGroups"
     @import="handleImport"
   />
@@ -167,6 +177,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
 import AlertModal from './components/AlertModal.vue'
 import NotificationContainer from './components/NotificationContainer.vue'
+import TaskOverlay from './components/TaskOverlay.vue'
 const WorkspaceModal = defineAsyncComponent(() => import('./components/WorkspaceModal.vue'))
 
 import { useNodes } from './composables/useNodes.js'
