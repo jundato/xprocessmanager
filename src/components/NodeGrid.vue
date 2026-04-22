@@ -20,6 +20,10 @@
           title="Drag to reorder group"
         ><i class="fa-solid fa-grip-vertical"></i></span>
         {{ group }}
+        <div class="group-title-actions" @click.stop>
+          <button class="btn-start btn-icon" style="padding: 2px 6px; font-size: 11px" @click="$emit('start-group', group)" title="Start all in group"><i class="fa-solid fa-forward-fast"></i></button>
+          <button class="btn-stop btn-icon" style="padding: 2px 6px; font-size: 11px" @click="$emit('stop-group', group)" title="Stop all in group"><i class="fa-solid fa-power-off"></i></button>
+        </div>
       </div>
       <div class="node-grid">
         <NodeCard
@@ -65,7 +69,7 @@ const props = defineProps({
   viewMode: { type: String, default: 'group' },
 })
 
-const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'reorder', 'reorder-groups', 'move-to-group', 'branch-click', 'open-workspace', 'pull-git'])
+const emit = defineEmits(['select', 'start', 'stop', 'restart', 'edit', 'hover-enter', 'hover-leave', 'hover-cancel', 'reorder', 'reorder-groups', 'move-to-group', 'branch-click', 'open-workspace', 'pull-git', 'start-group', 'stop-group'])
 
 // ── Card Drag and Drop ─────────────────────
 const dragName = ref(null)

@@ -3,10 +3,10 @@
     <div style="display: flex; align-items: center; gap: 16px">
       <h1>NEXUS</h1>
       <div class="summary-bar">
-        <span>Total: <span class="count">{{ total }}</span></span>
-        <span>Running: <span class="count running-count">{{ counts.running }}</span></span>
-        <span>Stopped: <span class="count stopped-count">{{ counts.stopped + counts.stopping }}</span></span>
-        <span v-if="counts.errored">Errored: <span class="count errored-count">{{ counts.errored }}</span></span>
+        <span class="stat-badge" title="Total nodes"><span class="stat-dot stat-dot-total"></span>{{ total }}</span>
+        <span class="stat-badge" title="Running"><span class="stat-dot stat-dot-running"></span>{{ counts.running }}</span>
+        <span class="stat-badge" title="Stopped"><span class="stat-dot stat-dot-stopped"></span>{{ counts.stopped + counts.stopping }}</span>
+        <span v-if="counts.errored" class="stat-badge" title="Errored"><span class="stat-dot stat-dot-errored"></span>{{ counts.errored }}</span>
       </div>
     </div>
     <div class="header-actions">
@@ -14,11 +14,8 @@
       <button class="btn-ghost" @click="$emit('add-node')">
         <i class="fa-solid fa-plus mr-1"></i> Node
       </button>
-      <button class="btn-start btn-icon" @click="$emit('start-all')" title="Start All">
-        <i class="fa-solid fa-play"></i>
-      </button>
-      <button class="btn-stop btn-icon" @click="$emit('stop-all')" title="Stop All">
-        <i class="fa-solid fa-stop"></i>
+      <button class="btn-ghost" :class="{ spinning: checkingRemote }" @click="$emit('check-remote-updates')" title="Check all nodes for remote updates">
+        <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Fetch
       </button>
       <button
         type="button"
@@ -40,7 +37,8 @@
 defineProps({
   counts: { type: Object, required: true },
   total: { type: Number, required: true },
+  checkingRemote: { type: Boolean, default: false },
 })
 
-defineEmits(['add-node', 'start-all', 'stop-all', 'open-settings'])
+defineEmits(['add-node', 'open-settings', 'check-remote-updates'])
 </script>

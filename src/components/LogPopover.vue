@@ -9,7 +9,19 @@
   >
     <div class="log-popover-title">
       <span>Logs — {{ name }}</span>
-      <button class="btn-popover-clear" @click.stop="$emit('clear')">Clear</button>
+      <div style="display: flex; gap: 4px; align-items: center">
+        <button class="btn-popover-clear" @click.stop="$emit('clear')" title="Clear logs">
+          <i class="fa-solid fa-eraser"></i>
+        </button>
+        <button
+          class="btn-popover-pin"
+          :class="{ active: pinned }"
+          @click.stop="$emit('toggle-pin')"
+          :title="pinned ? 'Unpin popover' : 'Pin popover open'"
+        >
+          <i class="fa-solid fa-thumbtack"></i>
+        </button>
+      </div>
     </div>
     <div class="log-popover-body log-popover-xterm" ref="xtermContainerRef"></div>
   </div>
@@ -25,9 +37,10 @@ const props = defineProps({
   name: { type: String, default: '' },
   logs: { type: Array, default: () => [] },
   style: { type: Object, default: () => ({}) },
+  pinned: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['cancel-hide', 'schedule-hide', 'clear'])
+const emit = defineEmits(['cancel-hide', 'schedule-hide', 'clear', 'toggle-pin'])
 
 const popoverRef = ref(null)
 const xtermContainerRef = ref(null)

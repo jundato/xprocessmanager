@@ -2,10 +2,10 @@
   <AppHeader
     :counts="counts"
     :total="nodeStore.nodes.value.length"
+    :checking-remote="checkingRemote"
     @add-node="openAddModal"
-    @start-all="nodeStore.startAll"
-    @stop-all="nodeStore.stopAll"
     @open-settings="settingsStore.openSettings"
+    @check-remote-updates="handleCheckAllRemote"
   />
 
   <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (logStore.logPanelHeight.value + 16) + 'px' : '' }">
@@ -46,6 +46,8 @@
       @branch-click="openBranchModal"
       @open-workspace="openWorkspaceModal"
       @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+      @start-group="handleStartGroup"
+      @stop-group="handleStopGroup"
     />
   </div>
 
@@ -55,17 +57,22 @@
     :name="popoverStore.popoverName.value || ''"
     :logs="popoverStore.popoverLogs.value"
     :style="popoverStore.popoverStyle.value"
+    :pinned="popoverStore.popoverPinned.value"
     @cancel-hide="popoverStore.cancelPopoverHide"
     @schedule-hide="popoverStore.schedulePopoverHide"
     @clear="popoverStore.clearPopoverLogs"
+    @toggle-pin="popoverStore.togglePin"
   />
 
   <XTermPanel
     v-if="selectedIsPty"
-    :node-name="logStore.selectedNode.value"
+    :node="selectedNodeObject"
     :panel-height="logStore.logPanelHeight.value"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
+    @start="handleStart"
+    @stop="handleStop"
+    @restart="handleRestart"
   />
 
   <LogPanel
@@ -109,6 +116,8 @@
     :show="workspaceModalStore.show"
     :node-name="workspaceModalStore.nodeName"
     :node-status="workspaceModalStatus"
+    :is-agent="workspaceModalIsAgent"
+    :log-panel-height="logStore.logPanelHeight.value"
     @close="closeWorkspaceModal"
     @start-node="handleStart"
   />
@@ -311,6 +320,16 @@ async function handleRestart(name) {
   await nodeStore.restartNode(name)
 }
 
+async function handleStartGroup(group) {
+  const nodes = nodeStore.nodes.value.filter(n => (n.group || 'other') === group && n.status !== 'running')
+  await Promise.all(nodes.map(n => nodeStore.startNode(n.name)))
+}
+
+async function handleStopGroup(group) {
+  const nodes = nodeStore.nodes.value.filter(n => (n.group || 'other') === group && n.status === 'running')
+  await Promise.all(nodes.map(n => nodeStore.stopNode(n.name)))
+}
+
 // ── Branch Modal ────────────────────────────
 import { reactive } from 'vue'
 const branchModalStore = reactive({
@@ -397,6 +416,24 @@ async function handlePullGitChanges(name, strategy = null) {
   return true
 }
 
+const checkingRemote = ref(false)
+
+async function handleCheckAllRemote() {
+  if (checkingRemote.value) return
+  checkingRemote.value = true
+  try {
+    const nodesWithBranch = nodeStore.nodes.value.filter(n => n.branch && n.cwd)
+    await Promise.all(
+      nodesWithBranch.map(n =>
+        api(`/api/processes/${encodeURIComponent(n.name)}/git/remote-status`, 'POST').catch(() => {})
+      )
+    )
+    await nodeStore.refresh(true)
+  } finally {
+    checkingRemote.value = false
+  }
+}
+
 // ── Workspace Modal ─────────────────────────
 const workspaceModalStore = reactive({
   show: false,
@@ -409,19 +446,42 @@ const workspaceModalStatus = computed(() => {
   return node?.status || 'stopped'
 })
 
+const workspaceModalIsAgent = computed(() => {
+  if (!workspaceModalStore.nodeName) return false
+  const node = nodeStore.nodes.value.find(n => n.name === workspaceModalStore.nodeName)
+  return node?.type === 'agent'
+})
+
 function openWorkspaceModal(node) {
   workspaceModalStore.nodeName = node.name
   workspaceModalStore.show = true
+  
+  if (node.type === 'agent') {
+    if (logStore.selectedNode.value !== node.name) {
+      handleSelectLog(node.name)
+    }
+  }
 }
 
 function closeWorkspaceModal() {
+  const wasAgent = workspaceModalIsAgent.value
+  const nodeName = workspaceModalStore.nodeName
   workspaceModalStore.show = false
   workspaceModalStore.nodeName = null
+  
+  if (wasAgent && logStore.selectedNode.value === nodeName) {
+    logStore.closeLog()
+  }
 }
 
 // ── Logs ────────────────────────────────────
 const logPanelRef = ref(null)
 const logPopoverRef = ref(null)
+
+const selectedNodeObject = computed(() => {
+  if (!logStore.selectedNode.value) return null
+  return nodeStore.nodes.value.find(n => n.name === logStore.selectedNode.value) || null
+})
 
 function handleSelectLog(name) {
   popoverStore.hideLogPopover()
@@ -429,7 +489,16 @@ function handleSelectLog(name) {
 }
 
 function handleCloseLog() {
+  const closedNode = logStore.selectedNode.value
   logStore.closeLog()
+  
+  if (workspaceModalStore.show && workspaceModalStore.nodeName === closedNode) {
+    const node = nodeStore.nodes.value.find(n => n.name === closedNode)
+    if (node?.type === 'agent') {
+      workspaceModalStore.show = false
+      workspaceModalStore.nodeName = null
+    }
+  }
 }
 
 async function handleSendStdin(text) {

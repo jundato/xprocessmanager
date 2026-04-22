@@ -13,7 +13,37 @@
     ></div>
     <div class="log-header">
       <span>Terminal — {{ nodeName }}</span>
-      <button class="btn-ghost" @click="$emit('close')" style="margin-left: auto">Close</button>
+      <div class="log-actions" style="margin-left: auto; display: flex; gap: 8px; margin-right: 12px; align-items: center">
+        <template v-if="node?.status === 'running'">
+          <button class="btn-stop btn-icon" @click="$emit('stop', node?.name)" title="Stop"><i class="fa-solid fa-stop"></i></button>
+          <button class="btn-restart btn-icon" @click="$emit('restart', node?.name)" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
+        </template>
+        <template v-else>
+          <button class="btn-start btn-icon" @click="$emit('start', node?.name)" title="Start"><i class="fa-solid fa-play"></i></button>
+          <div v-if="node?.type === 'agent' && isGemini" class="session-dropdown-container">
+            <button class="btn-sessions btn-icon" @click.stop="toggleSessions" title="Resume Session">
+              <i class="fa-solid fa-history"></i>
+            </button>
+            <div v-if="showSessions" class="session-dropdown" @click.stop>
+              <div class="session-dropdown-header">
+                Recent Sessions
+                <button class="btn-close-sessions" @click="showSessions = false">&times;</button>
+              </div>
+              <div v-if="loadingSessions" class="session-loading">Loading...</div>
+              <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
+              <div v-else class="session-list">
+                <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s.id)">
+                  <div class="session-title">{{ s.title }}</div>
+                  <div class="session-time">{{ s.time }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+      <button class="btn-ghost" @click="$emit('close')" title="Close Terminal">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
     </div>
     <div
       ref="termContainerRef"
@@ -30,18 +60,68 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { api } from '../composables/useApi'
 
 const props = defineProps({
-  nodeName: { type: String, default: null },
+  node: { type: Object, default: null },
   panelHeight: { type: Number, default: 400 },
 })
 
-const emit = defineEmits(['close', 'resize'])
+const nodeName = computed(() => props.node?.name)
+const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart'])
+
+const isGemini = computed(() => {
+  const cmd = String(props.node?.command || '').toLowerCase()
+  return cmd.includes('gemini')
+})
+
+const showSessions = ref(false)
+const loadingSessions = ref(false)
+const sessions = ref([])
+
+import { useAlert } from '../composables/useAlert.js'
+const { showAlert } = useAlert()
+
+async function toggleSessions() {
+  showSessions.value = !showSessions.value
+  if (showSessions.value) {
+    loadingSessions.value = true
+    try {
+      sessions.value = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/sessions`)
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err)
+      showAlert('Error', 'Failed to fetch sessions.')
+    } finally {
+      loadingSessions.value = false
+    }
+  }
+}
+
+async function resumeSession(sessionId) {
+  try {
+    const result = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/resume/${sessionId}`, 'POST')
+    if (result && result.staleSession) {
+      try {
+        sessions.value = await api(`/api/processes/${encodeURIComponent(nodeName.value)}/sessions`)
+      } catch {}
+      showAlert('Session unavailable', result.error)
+      return
+    }
+    if (result && result.error) {
+      showAlert('Error', `Failed to resume session: ${result.error}`)
+      return
+    }
+    showSessions.value = false
+    emit('start', nodeName.value)
+  } catch (err) {
+    console.error('Failed to resume session:', err)
+    showAlert('Error', `Failed to resume session: ${err.message}`)
+  }
+}
 
 const termContainerRef = ref(null)
 const dragging = ref(false)
@@ -157,8 +237,10 @@ function connectWs(name) {
   ws = localWs
 
   localWs.onopen = () => {
-    // If we have an open socket and a term, ensure dimensions are sent
-    if (term) fitWide()
+    if (term) {
+      fitWide()
+      nextTick(() => term.focus())
+    }
   }
 
   localWs.onmessage = (ev) => {
@@ -168,7 +250,7 @@ function connectWs(name) {
   localWs.onclose = () => {
     if (ws !== localWs) return
     ws = null
-    if (props.nodeName === name) {
+    if (nodeName.value === name) {
       wsRetryTimer = setTimeout(() => connectWs(name), 1500)
     }
   }
@@ -180,8 +262,16 @@ function disconnectWs() {
   if (ws) { ws.close(); ws = null }
 }
 
+// When node status changes to running, attempt to reconnect immediately.
+// If the PTY isn't ready yet, the onclose retry loop will keep trying every 1500ms.
+watch(() => props.node?.status, (status, oldStatus) => {
+  if (status === 'running' && oldStatus !== 'running' && nodeName.value) {
+    connectWs(nodeName.value)
+  }
+})
+
 // When nodeName changes, reconnect
-watch(() => props.nodeName, async (name, oldName) => {
+watch(nodeName, async (name, oldName) => {
   if (name && name !== oldName) {
     if (!term) createTerminal()
     else { term.clear(); fitWide() }
@@ -215,13 +305,14 @@ watch(() => props.panelHeight, () => {
   nextTick(() => fitWide())
 })
 
-onMounted(async () => {
-  if (props.nodeName) {
-    await nextTick()
+onMounted(() => {
+  if (nodeName.value) {
     createTerminal()
-    connectWs(props.nodeName)
-    await nextTick()
-    focusTerminal()
+    connectWs(nodeName.value)
+    nextTick(() => {
+      fitWide()
+      focusTerminal()
+    })
   }
 })
 
@@ -277,8 +368,8 @@ function onDragLeave() {
 async function onDrop(ev) {
   dragCounter = 0
   dragOverTerminal.value = false
-  const files = ev.dataTransfer.files
-  if (!files.length || !props.nodeName) return
+  const files = ev.dataTransfer?.files
+  if (!files.length || !nodeName.value) return
 
   for (const file of files) {
     try {
@@ -295,7 +386,7 @@ async function onDrop(ev) {
         content = await readFileAsText(file)
       }
 
-      await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file`, 'PUT', {
+      await api(`/api/processes/${encodeURIComponent(nodeName.value)}/file`, 'PUT', {
         path: file.name,
         content,
         encoding

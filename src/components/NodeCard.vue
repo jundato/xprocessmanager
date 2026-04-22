@@ -2,7 +2,7 @@
   <div
     ref="cardRef"
     class="card"
-    :class="{ selected: isSelected, expanded }"
+    :class="{ selected: isSelected, expanded, stopped: node.status !== 'running' }"
     :style="{ borderColor, '--card-color': borderColor }"
     @click="$emit('select', node.name)"
     @mouseenter="$emit('hover-enter', node.name, $event.currentTarget, expanded, node.command)"
@@ -19,11 +19,11 @@
         @mouseenter="$emit('hover-cancel', node.name)"
         @mouseleave="$emit('hover-enter', node.name, cardRef, expanded, node.command)"
       >
-        <template v-if="node.status === 'running'">
+        <template v-if="node.status === 'running' && !isSelected">
           <button class="btn-stop btn-icon" @click.stop="$emit('stop', node.name)" title="Stop"><i class="fa-solid fa-stop"></i></button>
           <button class="btn-restart btn-icon" @click.stop="$emit('restart', node.name)" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
         </template>
-        <template v-else>
+        <template v-else-if="!isSelected">
           <button class="btn-start btn-icon" @click.stop="$emit('start', node.name)" title="Start"><i class="fa-solid fa-play"></i></button>
           <div v-if="node.type === 'agent' && isGemini" class="session-dropdown-container">
             <button class="btn-sessions btn-icon" @click.stop="toggleSessions" title="Resume Session">
@@ -46,7 +46,7 @@
           </div>
         </template>
         <button v-if="node.cwd" class="btn-icon btn-workspace" @click.stop="$emit('open-workspace', node)" title="Open Workspace">
-          <i class="fa-solid fa-folder-open"></i>
+          <i :class="node.type === 'agent' ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'"></i>
         </button>
         <button class="btn-gear" @click.stop="$emit('edit', node.name)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -60,14 +60,6 @@
       <div v-if="node.branch" class="branch-tag-group" @click.stop>
         <span class="branch-tag" @click.stop="$emit('branch-click', node.name)">{{ node.branch }}</span>
         <button
-          class="btn-git-action btn-refresh"
-          :class="{ spinning: gitRemoteStatus === 'checking' }"
-          @click.stop="checkGitStatus"
-          title="Check for remote updates"
-        >
-          <i class="fa-solid fa-arrows-rotate"></i>
-        </button>
-        <button
           v-if="gitRemoteStatus === 'behind'"
           class="btn-git-action btn-pull"
           @click.stop="pullGitChanges"
@@ -75,25 +67,20 @@
         >
           <i class="fa-solid fa-cloud-arrow-down"></i>
         </button>
+        <button
+          class="btn-git-action btn-refresh"
+          :class="{ spinning: gitRemoteStatus === 'checking' }"
+          @click.stop="checkGitStatus"
+          title="Check for remote updates"
+        >
+          <i class="fa-solid fa-arrows-rotate"></i>
+        </button>
       </div>
       <div class="card-meta-info">
-        <span title="PID"><i class="fa-solid fa-hashtag mr-1"></i>{{ node.pid || '-' }}</span>
+        <span class="pid-badge" title="PID"><i class="fa-solid fa-hashtag mr-1"></i>{{ node.pid || '-' }}</span>
         <span title="Uptime"><i class="fa-regular fa-clock mr-1"></i>{{ uptime }}</span>
       </div>
     </div>
-
-    <!-- Bottom Expand Button -->
-    <button
-      class="card-expand-indicator"
-      :class="{ active: expanded }"
-      :style="{ borderColor, color: expanded ? borderColor : '' }"
-      @click.stop="toggleExpand"
-      :title="expanded ? 'Collapse' : 'Expand'"
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline :points="expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'"/>
-      </svg>
-    </button>
   </div>
 </template>
 
@@ -188,17 +175,6 @@ const uptime = computed(() => {
   return '-'
 })
 
-// ── Expand / Collapse ──────────────────────
-function toggleExpand() {
-  expanded.value = !expanded.value
-  if (expanded.value) {
-    // Show popover immediately when expanded
-    emit('hover-enter', props.node.name, cardRef.value, true)
-  } else {
-    // Hide popover immediately when collapsed
-    emit('hover-leave', props.node.name, true)
-  }
-}
 
 async function checkGitStatus() {
   gitRemoteStatus.value = 'checking'

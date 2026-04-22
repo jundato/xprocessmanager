@@ -1,13 +1,17 @@
 <template>
-  <div v-if="show" class="modal-overlay" @mousedown.self="overlayMouseDown = true" @click.self="handleOverlayClick">
-    <div class="modal workspace-modal" :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-with-term': tabs.some(t => t.id === 'terminal') }">
+  <div v-if="show" class="modal-overlay workspace-modal-overlay" :class="{ 'align-top': isAgent }" @mousedown.self="overlayMouseDown = true" @click.self="handleOverlayClick">
+    <div class="modal workspace-modal" 
+         :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-agent': isAgent }"
+         :style="isAgent ? { height: `calc(100vh - 84px - ${logPanelHeight}px)` } : {}">
       <div class="workspace-header">
         <h2>
-          <i class="fa-solid fa-folder-open" style="margin-right: 8px; color: var(--yellow)"></i>
+          <i :class="isAgent ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'" style="margin-right: 8px; color: var(--yellow)"></i>
           {{ nodeName }}
         </h2>
         <div style="display: flex; gap: 6px; margin-left: auto">
-          <button class="btn-ghost" @click="handleClose">Close</button>
+          <button class="btn-ghost" @click="handleClose" title="Close Workspace" style="padding: 4px 8px;">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
         </div>
       </div>
 
@@ -128,7 +132,7 @@
         <div v-if="tabs.length > 0" class="workspace-resizer" @mousedown="startResizing"></div>
 
         <!-- Tabbed side panel -->
-        <div v-if="tabs.length > 0" class="workspace-tabs-panel" :style="{ width: terminalWidth + 'px' }">
+        <div class="workspace-tabs-panel" :style="{ width: terminalWidth + 'px' }">
           <div class="workspace-tabs-header">
             <div
               v-for="tab in tabs"
@@ -137,28 +141,15 @@
               :class="{ active: activeTabId === tab.id }"
               @click="activeTabId = tab.id"
             >
-              <i :class="tab.type === 'terminal' ? 'fa-solid fa-terminal' : fileIconByName(tab.name)" style="margin-right: 6px"></i>
+              <i :class="fileIconByName(tab.name)" style="margin-right: 6px"></i>
               <span class="tab-name">{{ tab.name }}</span>
-              <button v-if="tab.type !== 'terminal'" class="tab-close" @click.stop="closeTab(tab.id)">
+              <button class="tab-close" @click.stop="closeTab(tab.id)">
                 <i class="fa-solid fa-xmark"></i>
               </button>
             </div>
           </div>
 
           <div class="workspace-tab-content">
-            <!-- Terminal Tab -->
-            <div v-show="activeTab?.type === 'terminal'" class="workspace-terminal-tab">
-              <div v-if="nodeStatus !== 'running'" class="workspace-terminal-start">
-                <i class="fa-solid fa-terminal" style="font-size: 3rem; color: var(--text-dim); margin-bottom: 1rem"></i>
-                <h3>Terminal is not available</h3>
-                <p style="color: var(--text-dim); margin-bottom: 1.5rem">The process must be running to access the terminal.</p>
-                <button class="btn-start" @click="handleStartNode" style="padding: 10px 24px; font-size: 1rem">
-                  <i class="fa-solid fa-play" style="margin-right: 8px"></i>Start Process
-                </button>
-              </div>
-              <div v-else ref="wsTermContainerRef" class="workspace-terminal-container" tabindex="0" @click="focusWsTerm"></div>
-            </div>
-
             <!-- File Tab -->
             <div v-show="activeTab?.type === 'file'" class="workspace-file-tab">
               <div class="workspace-editor-bar">
@@ -196,6 +187,8 @@
     <MermaidEditor
       v-if="mermaidEditorOpen"
       :initialCode="mermaidEditorCode"
+      :is-agent="isAgent"
+      :log-panel-height="logPanelHeight"
       @save="onMermaidSave"
       @cancel="closeMermaidEditor"
     />
@@ -204,9 +197,6 @@
 
 <script setup>
 import { ref, watch, computed, nextTick, onUnmounted, shallowRef, markRaw, defineAsyncComponent } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
 import { api } from '../composables/useApi.js'
 
 const MermaidEditor = defineAsyncComponent(() => import('./MermaidEditor.vue'))
@@ -215,23 +205,11 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   nodeName: { type: String, default: null },
   nodeStatus: { type: String, default: null },
+  isAgent: { type: Boolean, default: false },
+  logPanelHeight: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['close', 'start-node'])
-
-async function handleStartNode() {
-  if (!props.nodeName) return
-  emit('start-node', props.nodeName)
-}
-
-// Watch status to auto-initialize terminal if it becomes running while modal is open
-watch(() => props.nodeStatus, async (status) => {
-  if (props.show && status === 'running' && activeTabId.value === 'terminal') {
-    await nextTick()
-    createWsTerm()
-    connectWsTerm(props.nodeName)
-  }
-})
 
 const overlayMouseDown = ref(false)
 function handleOverlayClick() {
@@ -242,7 +220,6 @@ function handleOverlayClick() {
 }
 
 function handleClose() {
-  closeTerminal()
   emit('close')
 }
 
@@ -267,9 +244,6 @@ async function closeTab(id) {
   const tab = tabs.value[idx]
   if (tab.type === 'file' && tab.model) {
     tab.model.dispose()
-  }
-  if (tab.type === 'terminal') {
-    closeTerminal()
   }
 
   tabs.value.splice(idx, 1)
@@ -718,13 +692,6 @@ watch(activeTabId, async (newId) => {
         dirty.value = editorInstance.getValue() !== tab.originalContent
       }
     }
-  } else if (tab?.type === 'terminal') {
-    if (props.nodeStatus === 'running') {
-      await nextTick()
-      createWsTerm()
-      connectWsTerm(props.nodeName)
-      fitWsTerm()
-    }
   }
 })
 
@@ -780,140 +747,6 @@ function stopResizing() {
   document.body.style.userSelect = ''
 }
 
-let wsTerm = null
-let wsTermFitAddon = null
-let wsTermWs = null
-let wsTermRetryTimer = null
-let wsTermResizeObserver = null
-
-const TERM_THEME = {
-  background: '#0f1117',
-  foreground: '#e1e4ed',
-  cursor: '#60a5fa',
-  selectionBackground: 'rgba(96, 165, 250, 0.3)',
-  black: '#1a1d27', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
-  blue: '#60a5fa', magenta: '#a78bfa', cyan: '#22d3ee', white: '#e1e4ed',
-  brightBlack: '#8b8fa3', brightRed: '#fca5a5', brightGreen: '#6ee7b7', brightYellow: '#fde68a',
-  brightBlue: '#93c5fd', brightMagenta: '#c4b5fd', brightCyan: '#67e8f9', brightWhite: '#f8fafc',
-}
-
-function createWsTerm() {
-  if (wsTerm) {
-    if (wsTermContainerRef.value && !wsTerm.element) {
-      wsTerm.open(wsTermContainerRef.value)
-      setupWsTermResizeObserver()
-    }
-    return
-  }
-  if (!wsTermContainerRef.value) return
-
-  wsTerm = new Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-    theme: TERM_THEME,
-    allowProposedApi: true,
-  })
-
-  wsTermFitAddon = new FitAddon()
-  wsTerm.loadAddon(wsTermFitAddon)
-  wsTerm.loadAddon(new WebLinksAddon())
-  
-  if (wsTermContainerRef.value) {
-    wsTerm.open(wsTermContainerRef.value)
-    setupWsTermResizeObserver()
-    fitWsTerm()
-  }
-
-  wsTerm.onResize(({ cols, rows }) => {
-    if (wsTermWs && wsTermWs.readyState === 1) {
-      wsTermWs.send(JSON.stringify({ type: 'resize', cols, rows }))
-    }
-  })
-
-  wsTerm.onData((data) => {
-    // Filter out automatic terminal identification responses that can cause loops
-    if (data === '\x1b[?1;2c' || data === '\x1b[?62;c' || data === '\x1b[?6c') {
-      return
-    }
-    if (wsTermWs && wsTermWs.readyState === 1) {
-      wsTermWs.send(JSON.stringify({ type: 'input', data }))
-    }
-  })
-}
-
-function setupWsTermResizeObserver() {
-  if (wsTermResizeObserver) {
-    wsTermResizeObserver.disconnect()
-  }
-  if (!wsTermContainerRef.value) return
-  wsTermResizeObserver = new ResizeObserver(() => fitWsTerm())
-  wsTermResizeObserver.observe(wsTermContainerRef.value)
-}
-
-function fitWsTerm() {
-  if (!wsTermFitAddon || !wsTerm || !wsTerm.element) return
-  try {
-    const dims = wsTermFitAddon.proposeDimensions()
-    if (dims && dims.cols > 0 && dims.rows > 0) {
-      wsTermFitAddon.fit()
-    } else {
-      setTimeout(() => {
-        if (!wsTermFitAddon || !wsTerm || !wsTerm.element) return
-        const d2 = wsTermFitAddon.proposeDimensions()
-        if (d2 && d2.cols > 0 && d2.rows > 0) wsTermFitAddon.fit()
-      }, 50)
-    }
-  } catch {}
-}
-
-function focusWsTerm() {
-  if (wsTerm) wsTerm.focus()
-}
-
-function connectWsTerm(name) {
-  disconnectWsTerm()
-  if (!name) return
-
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${proto}//${location.host}/ws/terminal?name=${encodeURIComponent(name)}`
-  const localWs = new WebSocket(url)
-  wsTermWs = localWs
-
-  localWs.onopen = () => {
-    if (wsTerm) fitWsTerm()
-  }
-
-  localWs.onmessage = (ev) => {
-    if (wsTermWs === localWs && wsTerm) wsTerm.write(ev.data)
-  }
-
-  localWs.onclose = () => {
-    if (wsTermWs !== localWs) return
-    wsTermWs = null
-    if (tabs.value.some(t => t.id === 'terminal') && props.nodeName === name) {
-      wsTermRetryTimer = setTimeout(() => connectWsTerm(name), 1500)
-    }
-  }
-
-  localWs.onerror = () => {}
-}
-
-function disconnectWsTerm() {
-  if (wsTermRetryTimer) { clearTimeout(wsTermRetryTimer); wsTermRetryTimer = null }
-  if (wsTermWs) { wsTermWs.close(); wsTermWs = null }
-}
-
-function destroyWsTerm() {
-  if (wsTermResizeObserver) { wsTermResizeObserver.disconnect(); wsTermResizeObserver = null }
-  if (wsTerm) { wsTerm.dispose(); wsTerm = null; wsTermFitAddon = null }
-}
-
-
-function closeTerminal() {
-  disconnectWsTerm()
-  destroyWsTerm()
-}
 
 function fileIcon(file) {
   if (file.isDirectory) return 'fa-solid fa-folder file-icon-dir'
@@ -945,17 +778,10 @@ watch(() => props.show, (val) => {
     clearSearch()
     fetchFiles('')
 
-    // Default to terminal tab
-    addTab({ id: 'terminal', type: 'terminal', name: 'Terminal' })
-    if (props.nodeStatus === 'running') {
-      nextTick(() => {
-        createWsTerm()
-        connectWsTerm(props.nodeName)
-      })
-    }
+
   } else if (!val) {
     disposeEditor()
-    closeTerminal()
+
     tabs.value = []
     activeTabId.value = null
     selectedFiles.value = []
@@ -967,19 +793,4 @@ watch(() => props.show, (val) => {
 </script>
 
 <style scoped>
-.workspace-terminal-start {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: #0f1117;
-  text-align: center;
-  padding: 2rem;
-}
-.workspace-terminal-start h3 {
-  font-size: 1.25rem;
-  margin-bottom: 0.5rem;
-  color: var(--text);
-}
 </style>

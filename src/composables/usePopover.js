@@ -17,6 +17,8 @@ export function usePopover() {
   let hoverPollTimer = null
   let hoverAnchorEl = null
   let hoverPopoverEl = null
+  let hoverPinned = false
+  const popoverPinned = ref(false)
 
   let popoverPollInterval = 1500
 
@@ -178,11 +180,19 @@ export function usePopover() {
     popoverName.value = null
     hoverSince = 0
     hoverAnchorEl = null
+    hoverPinned = false
+    popoverPinned.value = false
     popoverVisible.value = false
     popoverLogs.value = []
   }
 
+  function togglePin() {
+    hoverPinned = !hoverPinned
+    popoverPinned.value = hoverPinned
+  }
+
   function schedulePopoverHide() {
+    if (hoverPinned) return   // keep open while card is expanded
     clearTimeout(hoverHideTimer)
     hoverHideTimer = setTimeout(() => {
       hoverHideTimer = null
@@ -203,7 +213,10 @@ export function usePopover() {
   // ── Card event handlers ──────────────────────
   function onCardHoverEnter(name, cardEl, immediate = false, command = '') {
     if (immediate) {
-      addPinnedPopover(name, cardEl)
+      // Open the hover popover right away and keep it open (mouseleave is
+      // guarded by `!expanded` on the card, so it won't auto-close).
+      hoverPinned = true
+      openHoverPopover(name, cardEl)
       return
     }
     // Passive hover — skip if already pinned
@@ -229,7 +242,8 @@ export function usePopover() {
 
   function onCardHoverLeave(name, force = false) {
     if (force) {
-      removePinnedPopover(name)
+      // Card was collapsed — close the popover that was pinned open.
+      if (popoverName.value === name) hideHoverPopover()
       return
     }
     if (pinnedPopovers.has(name)) return
@@ -274,10 +288,12 @@ export function usePopover() {
     popoverName,
     popoverLogs,
     popoverStyle,
+    popoverPinned,
     setPopoverEl,
     setPopoverPollInterval,
     hideLogPopover: hideHoverPopover,
     clearPopoverLogs,
+    togglePin,
     schedulePopoverHide,
     cancelPopoverHide,
     // Shared

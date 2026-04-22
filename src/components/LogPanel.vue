@@ -14,8 +14,12 @@
       <span style="font-size: 11px; color: var(--text-dim); margin-left: auto; margin-right: 12px">
         {{ lastRefresh }}
       </span>
-      <button class="btn-ghost" @click="$emit('clear')" style="margin-right: 4px">Clear</button>
-      <button class="btn-ghost" @click="$emit('close')">Close</button>
+      <button class="btn-ghost" @click="$emit('clear')" style="margin-right: 4px" title="Clear Logs">
+        <i class="fa-solid fa-eraser"></i>
+      </button>
+      <button class="btn-ghost" @click="$emit('close')" title="Close Panel">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
     </div>
     <div ref="logBodyRef" class="log-body">
       <div
