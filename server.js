@@ -41,6 +41,8 @@ const MAX_LOG_LINES = systemConfig.maxLogLines || 500;
 
 const configPath = path.join(__dirname, 'processes.config.json');
 let processConfigs = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf-8')) : [];
+// Filter out any null/undefined entries that might have leaked in
+processConfigs = processConfigs.filter(c => c && typeof c === 'object');
 let configChanged = false;
 
 processConfigs = processConfigs.map(c => {
@@ -173,7 +175,8 @@ function saveToolsConfig() {
 }
 
 function saveConfig() {
-  fs.writeFileSync(configPath, JSON.stringify(processConfigs, null, 2) + '\n');
+  const cleanConfigs = processConfigs.filter(c => c && typeof c === 'object');
+  fs.writeFileSync(configPath, JSON.stringify(cleanConfigs, null, 2) + '\n');
 }
 
 function saveEnvConfig() {
