@@ -556,13 +556,13 @@ watch(() => props.show, async (val) => {
   resolvedCwd.value = null
   fetchGlobalTools()
 
-  if (props.editingName) {
+  if (editingName.value) {
     const [config, procs] = await Promise.all([
-      api(`/api/config/${encodeURIComponent(props.editingName)}`),
+      api(`/api/config/${encodeURIComponent(editingName.value)}`),
       api('/api/processes'),
     ])
     if (config.error) { alert(config.error); return }
-    const proc = procs.find((p) => p.name === props.editingName)
+    const proc = procs.find((p) => p.name === editingName.value)
 
     form.name = config.name
     form.command = config.command || ''
@@ -633,11 +633,11 @@ function handleSubmit() {
     onSuccess: form.type === 'script' && form.onSuccess.length > 0 ? [...form.onSuccess] : undefined,
     tools: form.tools.length > 0 ? form.tools : undefined,
   }
-  emit('submit', { data, isEditing: isEditing.value, editingName: props.editingName })
+  emit('submit', { data, isEditing: isEditing.value, editingGuid: props.editingGuid })
 }
 
 function handleRemove() {
-  emit('remove', props.editingName)
+  emit('remove', props.editingGuid)
 }
 
 function handleClone() {
