@@ -1452,10 +1452,14 @@ app.post('/api/processes/:id/tools/execute', (req, res) => {
     cmd = cmd.split('{cwd}').join(resolvedCwd);
   }
   
-  // Quote path if it's a file that exists and contains spaces
-  const toolExecPath = path.isAbsolute(cmd) ? cmd : path.resolve(resolvedCwd, cmd);
-  if (cmd.includes(' ') && !cmd.startsWith('"') && !cmd.startsWith("'") && fs.existsSync(toolExecPath)) {
-    cmd = `"${cmd}"`;
+  // Quote path if it contains spaces and isn't already quoted
+  if (cmd.includes(' ') && !cmd.startsWith('"') && !cmd.startsWith("'")) {
+    // If it's a simple path (no spaces except in the path itself, and exists as a file)
+    // or if it's an absolute path that likely needs quoting.
+    const toolExecPath = path.isAbsolute(cmd) ? cmd : path.resolve(resolvedCwd, cmd);
+    if (fs.existsSync(toolExecPath) || (path.isAbsolute(cmd) && cmd.includes(' '))) {
+      cmd = `"${cmd}"`;
+    }
   }
 
   // Handle multiple params
