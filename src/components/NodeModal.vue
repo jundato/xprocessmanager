@@ -556,13 +556,13 @@ watch(() => props.show, async (val) => {
   resolvedCwd.value = null
   fetchGlobalTools()
 
-  if (props.editingGuid) {
+  if (editingName.value) {
     const [config, procs] = await Promise.all([
-      api(`/api/config/${encodeURIComponent(props.editingGuid)}`),
+      api(`/api/config/${encodeURIComponent(editingName.value)}`),
       api('/api/processes'),
     ])
     if (config.error) { alert(config.error); return }
-    const proc = procs.find((p) => p.guid === props.editingGuid)
+    const proc = procs.find((p) => p.name === editingName.value)
 
     form.name = config.name
     form.command = config.command || ''
