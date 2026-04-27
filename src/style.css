@@ -664,7 +664,8 @@ button:active {
 .card:hover .card-actions,
 .card.selected .card-actions,
 .card:hover .btn-refresh,
-.card.selected .btn-refresh {
+.card.selected .btn-refresh,
+.btn-refresh.spinning {
   opacity: 1;
 }
 
