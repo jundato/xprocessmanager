@@ -50,14 +50,17 @@ let fitAddon = null
 let resizeObserver = null
 let writtenLogsCount = 0
 
-const WIDE_COLS = 200
+const DEFAULT_COLS = 120
 
 function fitTerminal() {
   if (!fitAddon || !term || !term.element) return
   const dims = fitAddon.proposeDimensions()
-  if (dims && dims.rows > 0) {
-    // Force a wide terminal to trigger horizontal scrollbars in the container
-    term.resize(WIDE_COLS, dims.rows)
+  if (dims && dims.cols > 0 && dims.rows > 0) {
+    // Use the actual container width to prevent distortion
+    term.resize(dims.cols, dims.rows)
+  } else {
+    // Fallback to default if dimensions can't be calculated yet
+    term.resize(DEFAULT_COLS, 20)
   }
 }
 

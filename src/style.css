@@ -1480,6 +1480,7 @@ button:active {
 .log-popover {
   position: fixed;
   z-index: 19;
+  width: 600px;
   height: min(280px, 40vh);
   background: var(--surface);
   border: 1px solid var(--border);
