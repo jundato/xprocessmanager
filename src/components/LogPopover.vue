@@ -34,11 +34,13 @@
       </div>
     </div>
     <div class="log-popover-body">
-      <BaseTerminal 
-        ref="terminalRef"
-        :options="{ disableStdin: true }"
-        @ready="onTerminalReady"
-      />
+      <div class="log-popover-terminal">
+        <BaseTerminal
+          ref="terminalRef"
+          :options="{ disableStdin: true }"
+          @ready="onTerminalReady"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -61,7 +63,8 @@ const emit = defineEmits(['cancel-hide', 'schedule-hide', 'clear', 'toggle-pin',
 
 const popoverRef = ref(null)
 const terminalRef = ref(null)
-let writtenLogsCount = 0
+let ws = null
+let terminalReady = false
 
 const TYPE_ICONS = {
   service: 'fa-solid fa-server',
@@ -75,57 +78,56 @@ const typeIcon = computed(() => {
   return TYPE_ICONS[props.node.type] || 'fa-solid fa-circle'
 })
 
-function onTerminalReady() {
-  if (props.visible) {
-    syncLogs()
+function connectWs(guid) {
+  disconnectWs()
+  if (!guid) return
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  ws = new WebSocket(`${proto}//${location.host}/ws/terminal?id=${guid}`)
+  ws.onmessage = (event) => terminalRef.value?.write(event.data)
+  ws.onerror = () => {}
+  ws.onclose = () => { ws = null }
+}
+
+function disconnectWs() {
+  if (ws) {
+    ws.onmessage = null
+    ws.onclose = null
+    ws.close()
+    ws = null
+  }
+}
+
+async function onTerminalReady() {
+  terminalReady = true
+  if (props.visible && props.node?.guid) {
+    await nextTick()
+    terminalRef.value?.fit()
+    connectWs(props.node.guid)
   }
 }
 
 function handleClear() {
   terminalRef.value?.clear()
-  writtenLogsCount = 0
   emit('clear')
-}
-
-function syncLogs() {
-  if (!terminalRef.value) return
-  
-  if (props.logs.length < writtenLogsCount) {
-    terminalRef.value.clear()
-    writtenLogsCount = 0
-  }
-
-  const toWrite = props.logs.slice(writtenLogsCount)
-  for (const entry of toWrite) {
-    let text = entry.text
-    if (entry.source === 'stderr' && !text.includes('\x1b[')) {
-      text = `\x1b[31m${text}\x1b[0m`
-    }
-    terminalRef.value.writeln(text)
-  }
-  writtenLogsCount = props.logs.length
 }
 
 watch(() => props.visible, async (isVisible) => {
   if (isVisible) {
     await nextTick()
     terminalRef.value?.fit()
-    syncLogs()
+    if (terminalReady && props.node?.guid) connectWs(props.node.guid)
+  } else {
+    disconnectWs()
   }
 })
 
-watch(() => props.logs, () => {
-  if (props.visible) {
-    syncLogs()
-  }
-}, { deep: true })
-
-watch(() => props.name, () => {
+watch(() => props.node?.guid, (guid) => {
   terminalRef.value?.clear()
-  writtenLogsCount = 0
+  if (props.visible && terminalReady && guid) connectWs(guid)
 })
 
 onUnmounted(() => {
+  disconnectWs()
 })
 
 defineExpose({ popoverRef })
@@ -135,6 +137,12 @@ defineExpose({ popoverRef })
 .log-popover-body {
   flex: 1;
   min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: #0f1117;
+}
+.log-popover-terminal {
+  width: 100vw;
+  height: 100%;
 }
 </style>

@@ -139,7 +139,7 @@ function connectWs(id) {
   if (!id) return
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${proto}//${location.host}/ws/pty/${id}`
+  const wsUrl = `${proto}//${location.host}/ws/terminal?id=${id}`
   ws = new WebSocket(wsUrl)
 
   ws.onopen = () => {

@@ -283,6 +283,7 @@ export function usePopover() {
     // Hover
     popoverVisible,
     popoverName,
+    popoverNode,
     popoverLogs,
     popoverStyle,
     popoverPinned,

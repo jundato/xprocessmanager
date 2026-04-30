@@ -1232,10 +1232,6 @@ app.post('/api/config/import', (req, res) => {
       skipped.push({ name: item.name || '(unnamed)', reason: 'missing name or command' });
       continue;
     }
-    if (processConfigs.some((c) => c.name === item.name)) {
-      skipped.push({ name: item.name, reason: 'already exists' });
-      continue;
-    }
     const entry = { 
       guid: item.guid || generateGuid(),
       name: item.name, 
@@ -1260,9 +1256,6 @@ app.post('/api/config', (req, res) => {
   const { name, command, args, argsMode, cwd, type, group, stopCommand, usePty, onSuccess, tools } = req.body;
   if (!name || !command) {
     return res.status(400).json({ error: 'name and command are required' });
-  }
-  if (processConfigs.some((c) => c.name === name)) {
-    return res.status(409).json({ error: `Process "${name}" already exists` });
   }
   const entry = { guid: generateGuid(), name, command, args: args || [], argsMode: argsMode || 'raw', type: type || 'service', group: group || 'other' };
   if (cwd) entry.cwd = cwd;
@@ -1296,9 +1289,6 @@ app.put('/api/config/:id', (req, res) => {
     return res.status(400).json({ error: 'command is required' });
   }
   const finalName = (newName && newName.trim()) ? newName.trim() : existing.name;
-  if (finalName !== existing.name && processConfigs.some((c) => c.name === finalName)) {
-    return res.status(409).json({ error: `Process "${finalName}" already exists` });
-  }
   const updated = { 
     guid: existing.guid || generateGuid(),
     name: finalName, 

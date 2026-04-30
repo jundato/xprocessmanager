@@ -75,10 +75,7 @@ function initTerminal() {
 function fit() {
   if (!fitAddon || !term || !term.element) return
   try {
-    const dims = fitAddon.proposeDimensions()
-    if (dims && dims.cols > 0 && dims.rows > 0) {
-      term.resize(dims.cols, dims.rows)
-    }
+    fitAddon.fit()
   } catch (e) {
     console.warn('Terminal fit failed', e)
   }
