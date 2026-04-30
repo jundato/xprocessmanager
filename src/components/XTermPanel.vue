@@ -348,13 +348,14 @@ function fitWide() {
   if (!fitAddon || !term || !term.element) return
   const dims = fitAddon.proposeDimensions()
   if (dims && dims.cols > 0 && dims.rows > 0) {
-    term.resize(props.terminalWidth, dims.rows)
+    // Prefer the calculated columns from the container width
+    term.resize(dims.cols, dims.rows)
   } else {
     // Retry once if zero dimensions (often means container not yet visible)
     setTimeout(() => {
       if (!fitAddon || !term) return
       const d2 = fitAddon.proposeDimensions()
-      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(props.terminalWidth, d2.rows)
+      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(d2.cols, d2.rows)
     }, 50)
   }
 }

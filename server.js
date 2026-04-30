@@ -327,7 +327,7 @@ function triggerOnSuccess(entry, config) {
 }
 
 function getGeminiPath() {
-  const possible = ['/opt/homebrew/bin/gemini', '/usr/local/bin/gemini', 'gemini'];
+  const possible = ['/usr/local/bin/gemini', '/opt/homebrew/bin/gemini', 'gemini'];
   for (const p of possible) {
     if (p.startsWith('/') && fs.existsSync(p)) return p;
   }
@@ -598,17 +598,8 @@ function listGeminiSessions(cwd) {
       return sessions;
     };
 
-    exec(`node ${gemini} --list-sessions`, execOpts, (error, stdout, stderr) => {
-      if (error && stdout.includes('SyntaxError')) {
-        const brewNode = '/opt/homebrew/bin/node';
-        const brewGemini = '/opt/homebrew/bin/gemini';
-        if (fs.existsSync(brewNode) && fs.existsSync(brewGemini)) {
-          return exec(`${brewNode} ${brewGemini} --list-sessions`, execOpts, (err2, out2, serr2) => {
-            if (err2 && !out2) return reject({ error: err2.message, stderr: serr2 });
-            resolve(parse(out2));
-          });
-        }
-      }
+    const cmd = gemini.startsWith('/') ? `node "${gemini}"` : gemini;
+    exec(`${cmd} --list-sessions`, execOpts, (error, stdout, stderr) => {
       if (error && !stdout) return reject({ error: error.message, stderr });
       resolve(parse(stdout));
     });
