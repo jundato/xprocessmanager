@@ -14,9 +14,18 @@
       @touchstart.prevent="startDragTouch"
     ></div>
     <div class="log-header">
-      <div class="card-name" style="border: none; background: transparent; padding: 0;">
-        <i :class="[typeIcon, 'node-type-icon', node?.status]" :title="node?.type" style="margin-right: 8px;"></i>
-        <span>{{ nodeName }}</span>
+      <div class="card-header-left">
+        <div class="card-name" style="border: none; background: transparent; padding: 0;">
+          <i :class="[typeIcon, 'node-type-icon', node?.status]" :title="node?.type" style="margin-right: 8px;"></i>
+          <span>{{ nodeName }}</span>
+        </div>
+        <GitBranchTag
+          v-if="node"
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
       </div>
       <CardActions
         v-if="node"
@@ -66,6 +75,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { api } from '../composables/useApi'
 import { useNotifications } from '../composables/useNotifications'
 import CardActions from './CardActions.vue'
+import GitBranchTag from './GitBranchTag.vue'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -74,11 +84,11 @@ const props = defineProps({
   terminalWidth: { type: Number, default: 200 },
 })
 
-const { addNotification, removeNotification } = useNotifications()
+const { addNotification } = useNotifications()
 
 const nodeName = computed(() => props.node?.name)
 const nodeGuid = computed(() => props.node?.guid)
-const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit'])
+const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit', 'branch-click', 'pull-git', 'push-git'])
 
 const TYPE_ICONS = {
   service: 'fa-solid fa-server',

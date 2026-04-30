@@ -79,6 +79,9 @@
     @restart="handleRestart"
     @open-workspace="openWorkspaceModal"
     @edit="openEditModal"
+    @branch-click="openBranchModal"
+    @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+    @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
   />
 
   <LogPanel

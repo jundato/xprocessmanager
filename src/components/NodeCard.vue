@@ -17,33 +17,12 @@
           <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="margin-left: 8px; color: #fbbf24;" title="Waiting for input..."></i>
         </div>
 
-        <div v-if="node.branch" class="branch-tag-group" @click.stop>
-          <span class="branch-tag" @click.stop="$emit('branch-click', node.guid)">{{ node.branch }}</span>
-          <button
-            v-if="gitRemoteStatus === 'behind'"
-            class="btn-git-action btn-pull"
-            @click.stop="pullGitChanges"
-            title="Pull updates"
-          >
-            <i class="fa-solid fa-cloud-arrow-down"></i>
-          </button>
-          <button
-            v-if="gitRemoteStatus === 'ahead'"
-            class="btn-git-action btn-push"
-            @click.stop="pushGitChanges"
-            title="Push updates"
-          >
-            <i class="fa-solid fa-cloud-arrow-up"></i>
-          </button>
-          <button
-            class="btn-git-action btn-refresh"
-            :class="{ spinning: gitRemoteStatus === 'checking' }"
-            @click.stop="checkGitStatus"
-            title="Check for remote updates"
-          >
-            <i class="fa-solid fa-arrows-rotate"></i>
-          </button>
-        </div>
+        <GitBranchTag
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
       </div>
       <CardActions
         :node="node"
@@ -75,6 +54,7 @@ import { ref, computed, onUnmounted } from 'vue'
 import { api } from '../composables/useApi.js'
 import { useNotifications } from '../composables/useNotifications.js'
 import CardActions from './CardActions.vue'
+import GitBranchTag from './GitBranchTag.vue'
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -90,68 +70,15 @@ const { addNotification } = useNotifications()
 
 const cardRef = ref(null)
 const expanded = ref(false)
-const gitRemoteStatus = ref(null)
 
 function formatUptime(ms) {
-  if (!ms) return '-'
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${s % 60}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${m % 60}m`
-}
-
-const TYPE_ICONS = {
-  service: 'fa-solid fa-server',
-  agent: 'fa-solid fa-robot',
-  desk: 'fa-solid fa-desktop',
-  script: 'fa-solid fa-scroll',
-}
-
-const typeIcon = computed(() => TYPE_ICONS[props.node.type] || 'fa-solid fa-circle')
-
+...
 const uptime = computed(() => {
   if (props.node.status === 'running' && props.node.startedAt) {
     return formatUptime(Date.now() - props.node.startedAt)
   }
   return '-'
 })
-
-
-async function checkGitStatus() {
-  gitRemoteStatus.value = 'checking'
-  try {
-    const res = await api(`/api/processes/${encodeURIComponent(props.node.guid)}/git/remote-status`, 'POST')
-    gitRemoteStatus.value = res.status
-  } catch (err) {
-    console.error('Failed to check git status:', err)
-    gitRemoteStatus.value = 'error'
-    addNotification(`Failed to check git status for ${props.node.name}: ${err.message}`, 'error')
-  }
-}
-
-async function pullGitChanges() {
-  gitRemoteStatus.value = 'checking'
-  emit('pull-git', props.node.guid, (success) => {
-    if (success) {
-      checkGitStatus()
-    } else {
-      gitRemoteStatus.value = 'behind'
-    }
-  })
-}
-
-async function pushGitChanges() {
-  gitRemoteStatus.value = 'checking'
-  emit('push-git', props.node.guid, (success) => {
-    if (success) {
-      checkGitStatus()
-    } else {
-      gitRemoteStatus.value = 'ahead'
-    }
-  })
-}
 
 onUnmounted(() => {
 })
