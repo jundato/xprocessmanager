@@ -221,9 +221,13 @@ function checkNeedsInput(entry, text) {
 
 function resolveTemplate(str) {
   if (!str) return str;
-  return str.replace(/\{(\w+)\}/g, (match, key) => {
+  let resolved = str.replace(/\{(\w+)\}/g, (match, key) => {
     return envVars[key] !== undefined ? envVars[key] : match;
   });
+  if (resolved.startsWith('~')) {
+    resolved = path.join(os.homedir(), resolved.slice(1));
+  }
+  return resolved;
 }
 
 function getGitBranch(cwd) {

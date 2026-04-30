@@ -38,7 +38,7 @@
       @stop="handleStop"
       @restart="handleRestart"
       @edit="openEditModal"
-      @hover-enter="popoverStore.onCardHoverEnter"
+      @hover-enter="(...args) => popoverStore.onCardHoverEnter(...args)"
       @hover-leave="popoverStore.onCardHoverLeave"
       @hover-cancel="popoverStore.onCardHoverCancel"
       @reorder="handleReorder"
@@ -57,6 +57,7 @@
     ref="logPopoverRef"
     :visible="popoverStore.popoverVisible.value"
     :name="popoverStore.popoverName.value || ''"
+    :node="popoverStore.popoverNode.value"
     :logs="popoverStore.popoverLogs.value"
     :style="popoverStore.popoverStyle.value"
     :pinned="popoverStore.popoverPinned.value"
@@ -64,6 +65,9 @@
     @schedule-hide="popoverStore.schedulePopoverHide"
     @clear="popoverStore.clearPopoverLogs"
     @toggle-pin="popoverStore.togglePin"
+    @branch-click="openBranchModal"
+    @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+    @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
   />
 
   <XTermPanel

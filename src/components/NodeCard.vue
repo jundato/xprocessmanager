@@ -5,7 +5,7 @@
     :class="{ selected: isSelected, expanded, stopped: node.status !== 'running' }"
     :style="{ borderColor, '--card-color': borderColor }"
     @click="$emit('select', node.guid)"
-    @mouseenter="$emit('hover-enter', node.guid, $event.currentTarget, expanded, node.command)"
+    @mouseenter="$emit('hover-enter', node.guid, $event.currentTarget, expanded, node.command, node)"
     @mouseleave="!expanded && $emit('hover-leave', node.guid)"
   >
     <div class="card-header">

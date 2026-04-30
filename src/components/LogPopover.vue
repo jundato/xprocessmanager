@@ -8,9 +8,19 @@
     @mouseleave="$emit('schedule-hide')"
   >
     <div class="log-popover-title">
-      <span>Logs — {{ name }}</span>
-      <div style="display: flex; gap: 4px; align-items: center">
-        <button class="btn-popover-clear" @click.stop="$emit('clear')" title="Clear logs">
+      <div class="card-header-left">
+        <i :class="[typeIcon, 'node-type-icon', node?.status]" :title="node?.type"></i>
+        <span>Logs — {{ node?.name || name }}</span>
+        <GitBranchTag
+          v-if="node"
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
+      </div>
+      <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+        <button class="btn-popover-clear" @click.stop="handleClear" title="Clear logs">
           <i class="fa-solid fa-eraser"></i>
         </button>
         <button
@@ -23,186 +33,108 @@
         </button>
       </div>
     </div>
-    <div class="log-popover-body log-popover-xterm" ref="xtermContainerRef"></div>
+    <div class="log-popover-body">
+      <BaseTerminal 
+        ref="terminalRef"
+        :options="{ disableStdin: true }"
+        @ready="onTerminalReady"
+      />
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
+import { ref, watch, onUnmounted, nextTick, computed } from 'vue'
+import GitBranchTag from './GitBranchTag.vue'
+import BaseTerminal from './BaseTerminal.vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
   name: { type: String, default: '' },
+  node: { type: Object, default: null },
   logs: { type: Array, default: () => [] },
   style: { type: Object, default: () => ({}) },
   pinned: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['cancel-hide', 'schedule-hide', 'clear', 'toggle-pin'])
+const emit = defineEmits(['cancel-hide', 'schedule-hide', 'clear', 'toggle-pin', 'pull-git', 'push-git'])
 
 const popoverRef = ref(null)
-const xtermContainerRef = ref(null)
-
-let term = null
-let fitAddon = null
-let resizeObserver = null
+const terminalRef = ref(null)
 let writtenLogsCount = 0
 
-const DEFAULT_COLS = 120
+const TYPE_ICONS = {
+  service: 'fa-solid fa-server',
+  agent: 'fa-solid fa-robot',
+  desk: 'fa-solid fa-desktop',
+  script: 'fa-solid fa-scroll',
+}
 
-function fitTerminal() {
-  if (!fitAddon || !term || !term.element) return
-  const dims = fitAddon.proposeDimensions()
-  if (dims && dims.cols > 0 && dims.rows > 0) {
-    // Use the actual container width to prevent distortion
-    term.resize(dims.cols, dims.rows)
-  } else {
-    // Fallback to default if dimensions can't be calculated yet
-    term.resize(DEFAULT_COLS, 20)
+const typeIcon = computed(() => {
+  if (!props.node) return 'fa-solid fa-circle'
+  return TYPE_ICONS[props.node.type] || 'fa-solid fa-circle'
+})
+
+function onTerminalReady() {
+  if (props.visible) {
+    syncLogs()
   }
 }
 
-function initTerminal() {
-  if (term || !xtermContainerRef.value) return
+function handleClear() {
+  terminalRef.value?.clear()
+  writtenLogsCount = 0
+  emit('clear')
+}
 
-  term = new Terminal({
-    cursorBlink: false,
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-    theme: {
-      background: '#0f1117',
-      foreground: '#e1e4ed',
-      cursor: '#60a5fa',
-      selectionBackground: 'rgba(96, 165, 250, 0.3)',
-      black: '#1a1d27',
-      red: '#f87171',
-      green: '#34d399',
-      yellow: '#fbbf24',
-      blue: '#60a5fa',
-      magenta: '#a78bfa',
-      cyan: '#22d3ee',
-      white: '#e1e4ed',
-      brightBlack: '#8b8fa3',
-      brightRed: '#fca5a5',
-      brightGreen: '#6ee7b7',
-      brightYellow: '#fde68a',
-      brightBlue: '#93c5fd',
-      brightMagenta: '#c4b5fd',
-      brightCyan: '#67e8f9',
-      brightWhite: '#f8fafc',
-    },
-    disableStdin: true,
-    convertEol: true,
-    scrollback: 1000,
-    allowProposedApi: true,
-  })
-
-  fitAddon = new FitAddon()
-  term.loadAddon(fitAddon)
+function syncLogs() {
+  if (!terminalRef.value) return
   
-  term.open(xtermContainerRef.value)
-
-  resizeObserver = new ResizeObserver(() => {
-    fitTerminal()
-  })
-  resizeObserver.observe(xtermContainerRef.value)
-}
-
-function destroyTerminal() {
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  if (term) {
-    term.dispose()
-    term = null
-    fitAddon = null
-  }
-}
-
-function writeLogs(logs) {
-  if (!term) return
-
-  // If logs array is shorter, it means it was cleared or reset
-  if (logs.length < writtenLogsCount) {
-    term.clear()
+  if (props.logs.length < writtenLogsCount) {
+    terminalRef.value.clear()
     writtenLogsCount = 0
   }
 
-  const toWrite = logs.slice(writtenLogsCount)
+  const toWrite = props.logs.slice(writtenLogsCount)
   for (const entry of toWrite) {
     let text = entry.text
-    // Auto-color stderr if not already ANSI formatted
     if (entry.source === 'stderr' && !text.includes('\x1b[')) {
       text = `\x1b[31m${text}\x1b[0m`
     }
-    term.writeln(text)
+    terminalRef.value.writeln(text)
   }
-  writtenLogsCount = logs.length
+  writtenLogsCount = props.logs.length
 }
 
 watch(() => props.visible, async (isVisible) => {
   if (isVisible) {
     await nextTick()
-    initTerminal()
-    // When becoming visible, sync all current logs
-    term.clear()
-    writtenLogsCount = 0
-    writeLogs(props.logs)
-    // Defer fit until after the browser has laid out the popover with its final dimensions
-    requestAnimationFrame(() => {
-      fitTerminal()
-      // Second pass in case the first frame was still mid-layout
-      requestAnimationFrame(() => fitTerminal())
-    })
+    terminalRef.value?.fit()
+    syncLogs()
   }
 })
 
-watch(() => props.logs, (newLogs) => {
-  if (props.visible && term) {
-    writeLogs(newLogs)
+watch(() => props.logs, () => {
+  if (props.visible) {
+    syncLogs()
   }
 }, { deep: true })
 
 watch(() => props.name, () => {
-  if (term) {
-    term.clear()
-    writtenLogsCount = 0
-  }
-})
-
-onMounted(() => {
-  if (props.visible) {
-    initTerminal()
-    writeLogs(props.logs)
-  }
+  terminalRef.value?.clear()
+  writtenLogsCount = 0
 })
 
 onUnmounted(() => {
-  destroyTerminal()
 })
 
 defineExpose({ popoverRef })
 </script>
 
 <style scoped>
-.log-popover-xterm {
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: #0f1117;
-}
-.log-popover-xterm :deep(.xterm) {
+.log-popover-body {
   flex: 1;
   min-height: 0;
-}
-.log-popover-xterm :deep(.xterm-viewport) {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-  overflow-y: auto !important;
+  background: #0f1117;
 }
 </style>
