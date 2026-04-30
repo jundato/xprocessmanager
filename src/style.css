@@ -386,6 +386,14 @@ button:active {
   border-top-right-radius: 7px;
 }
 
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
 .card-name {
   font-size: 14px;
   font-weight: 600;
@@ -393,6 +401,9 @@ button:active {
   align-items: center;
   gap: 8px;
   color: var(--card-color, var(--text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .node-type-icon {

@@ -9,11 +9,41 @@
     @mouseleave="!expanded && $emit('hover-leave', node.guid)"
   >
     <div class="card-header">
-      <div class="card-name">
-        <i :class="[typeIcon, 'node-type-icon', node.status]" :title="node.type"></i>
-        {{ node.name }}
-        <i v-if="node.type === 'script' && node.status === 'running'" class="fa-solid fa-spinner script-running-spinner" style="margin-left: 8px;" title="Running..."></i>
-        <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="margin-left: 8px; color: #fbbf24;" title="Waiting for input..."></i>
+      <div class="card-header-left">
+        <div class="card-name">
+          <i :class="[typeIcon, 'node-type-icon', node.status]" :title="node.type"></i>
+          {{ node.name }}
+          <i v-if="node.type === 'script' && node.status === 'running'" class="fa-solid fa-spinner script-running-spinner" style="margin-left: 8px;" title="Running..."></i>
+          <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="margin-left: 8px; color: #fbbf24;" title="Waiting for input..."></i>
+        </div>
+
+        <div v-if="node.branch" class="branch-tag-group" @click.stop>
+          <span class="branch-tag" @click.stop="$emit('branch-click', node.guid)">{{ node.branch }}</span>
+          <button
+            v-if="gitRemoteStatus === 'behind'"
+            class="btn-git-action btn-pull"
+            @click.stop="pullGitChanges"
+            title="Pull updates"
+          >
+            <i class="fa-solid fa-cloud-arrow-down"></i>
+          </button>
+          <button
+            v-if="gitRemoteStatus === 'ahead'"
+            class="btn-git-action btn-push"
+            @click.stop="pushGitChanges"
+            title="Push updates"
+          >
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+          </button>
+          <button
+            class="btn-git-action btn-refresh"
+            :class="{ spinning: gitRemoteStatus === 'checking' }"
+            @click.stop="checkGitStatus"
+            title="Check for remote updates"
+          >
+            <i class="fa-solid fa-arrows-rotate"></i>
+          </button>
+        </div>
       </div>
       <CardActions
         :node="node"
@@ -32,33 +62,6 @@
       />
     </div>
     <div class="card-meta">
-      <div v-if="node.branch" class="branch-tag-group" @click.stop>
-        <span class="branch-tag" @click.stop="$emit('branch-click', node.guid)">{{ node.branch }}</span>
-        <button
-          v-if="gitRemoteStatus === 'behind'"
-          class="btn-git-action btn-pull"
-          @click.stop="pullGitChanges"
-          title="Pull updates"
-        >
-          <i class="fa-solid fa-cloud-arrow-down"></i>
-        </button>
-        <button
-          v-if="gitRemoteStatus === 'ahead'"
-          class="btn-git-action btn-push"
-          @click.stop="pushGitChanges"
-          title="Push updates"
-        >
-          <i class="fa-solid fa-cloud-arrow-up"></i>
-        </button>
-        <button
-          class="btn-git-action btn-refresh"
-          :class="{ spinning: gitRemoteStatus === 'checking' }"
-          @click.stop="checkGitStatus"
-          title="Check for remote updates"
-        >
-          <i class="fa-solid fa-arrows-rotate"></i>
-        </button>
-      </div>
       <div class="card-meta-info">
         <span class="pid-badge" title="PID"><i class="fa-solid fa-hashtag mr-1"></i>{{ node.pid || '-' }}</span>
         <span title="Uptime"><i class="fa-regular fa-clock mr-1"></i>{{ uptime }}</span>
