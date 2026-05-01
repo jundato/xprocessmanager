@@ -2,7 +2,7 @@
   <div
     class="xterm-panel"
     :class="{ hidden: !nodeName, dragging, 'drag-over': dragOverTerminal }"
-    :style="{ height: panelHeight + 'px' }"
+    :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
@@ -81,6 +81,7 @@ const props = defineProps({
   panelHeight: { type: Number, default: 400 },
   workspaceOpen: { type: Boolean, default: false },
   terminalWidth: { type: Number, default: 200 },
+  leftOffset: { type: Number, default: 0 },
 })
 
 const { addNotification } = useNotifications()

@@ -1,8 +1,14 @@
 <template>
-  <div v-if="show" class="modal-overlay workspace-modal-overlay" :class="{ 'align-top': isAgent }" @mousedown.self="overlayMouseDown = true" @click.self="handleOverlayClick">
-    <div class="modal workspace-modal" 
-         :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-agent': isAgent }"
-         :style="isAgent ? { height: `calc(100vh - 84px - ${logPanelHeight}px)` } : {}">
+  <div
+    v-if="show"
+    :class="docked ? 'workspace-docked-wrapper' : ['modal-overlay', 'workspace-modal-overlay', { 'align-top': isAgent }]"
+    :style="docked ? { width: dockedWidth + 'px', height: dockedHeight + 'px' } : null"
+    @mousedown.self="!docked && (overlayMouseDown = true)"
+    @click.self="!docked && handleOverlayClick()"
+  >
+    <div class="modal workspace-modal"
+         :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-agent': isAgent, 'workspace-modal-docked': docked }"
+         :style="docked ? { width: '100%', height: '100%', maxWidth: 'none', borderRadius: 0 } : (isAgent ? { height: `calc(100vh - 84px - ${logPanelHeight}px)` } : {})">
       <div class="workspace-header">
         <h2>
           <i :class="isAgent ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'" style="margin-right: 8px; color: var(--yellow)"></i>
@@ -178,6 +184,19 @@
               <!-- Monaco editor container -->
               <div v-show="!isMarkdown || markdownEditMode" ref="editorContainerRef" class="workspace-editor-container"></div>
             </div>
+
+            <!-- Image Tab -->
+            <div v-show="activeTab?.type === 'image'" class="workspace-image-tab">
+              <div class="workspace-editor-bar">
+                <span class="workspace-editor-filename">
+                  <i :class="fileIconByName(activeTab?.path || '')" style="margin-right: 6px"></i>
+                  {{ activeTab?.path }}
+                </span>
+              </div>
+              <div class="workspace-image-viewer">
+                <img v-if="activeTab?.type === 'image'" :src="activeTab.src" :alt="activeTab.name" />
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -209,6 +228,9 @@ const props = defineProps({
   logPanelHeight: { type: Number, default: 0 },
   initialFile: { type: String, default: null },
   initialLine: { type: Number, default: null },
+  docked: { type: Boolean, default: false },
+  dockedWidth: { type: Number, default: 480 },
+  dockedHeight: { type: Number, default: 300 },
 })
 
 const emit = defineEmits(['close', 'start-node'])
@@ -405,6 +427,10 @@ const isMarkdown = computed(() => {
   return activeTab.value.path.toLowerCase().endsWith('.md')
 })
 
+function isImageFile(filePath) {
+  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(filePath || '')
+}
+
 let mermaidBlockIndexCounter = 0
 
 async function loadMarked() {
@@ -598,6 +624,19 @@ async function openFileView(filePath, goToLine) {
       editorInstance.setPosition({ lineNumber: goToLine, column: 1 })
       editorInstance.focus()
     }
+    return
+  }
+
+  if (isImageFile(filePath)) {
+    fileError.value = null
+    const src = `/api/processes/${encodeURIComponent(props.nodeName)}/file-raw?path=${encodeURIComponent(filePath)}`
+    addTab({
+      id: `file-${filePath}`,
+      type: 'image',
+      name: filePath.split('/').pop(),
+      path: filePath,
+      src,
+    })
     return
   }
 

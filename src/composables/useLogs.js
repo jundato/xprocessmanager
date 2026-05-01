@@ -7,6 +7,7 @@ export function useLogs() {
   const lastRefresh = ref('')
   const logAutoScroll = ref(true)
   const logPanelHeight = ref(parseInt(localStorage.getItem('xpm-log-height')) || 300)
+  const dockedWorkspaceWidth = ref(parseInt(localStorage.getItem('xpm-docked-workspace-width')) || 480)
 
   let logSince = 0
   let logTimer = null
@@ -70,6 +71,12 @@ export function useLogs() {
     localStorage.setItem('xpm-log-height', height)
   }
 
+  function applyDockedWorkspaceWidth(w) {
+    const width = Math.max(240, Math.min(w, window.innerWidth - 240))
+    dockedWorkspaceWidth.value = width
+    localStorage.setItem('xpm-docked-workspace-width', width)
+  }
+
   function startLogPolling(intervalMs = 500) {
     stopLogPolling()
     logTimer = setInterval(fetchLogs, intervalMs)
@@ -95,6 +102,7 @@ export function useLogs() {
     lastRefresh,
     logAutoScroll,
     logPanelHeight,
+    dockedWorkspaceWidth,
     setLogBodyEl,
     fetchLogs,
     selectLog,
@@ -102,6 +110,7 @@ export function useLogs() {
     clearLogs,
     onLogScroll,
     applyLogPanelHeight,
+    applyDockedWorkspaceWidth,
     startLogPolling,
     stopLogPolling,
   }

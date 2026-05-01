@@ -76,6 +76,7 @@
     :panel-height="logStore.logPanelHeight.value"
     :terminal-width="settingsStore.sysTerminalWidth.value"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
+    :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
     @start="handleStart"
@@ -97,6 +98,7 @@
     :last-refresh="logStore.lastRefresh.value"
     :panel-height="logStore.logPanelHeight.value"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
+    :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
     @clear="logStore.clearLogs"
@@ -107,6 +109,17 @@
     @restart="handleRestart"
     @edit="openEditModal"
   />
+
+  <div
+    v-if="workspaceDocked"
+    class="workspace-dock-divider"
+    :class="{ dragging: workspaceDividerDragging }"
+    :style="{
+      left: logStore.dockedWorkspaceWidth.value + 'px',
+      height: logStore.logPanelHeight.value + 'px',
+    }"
+    @mousedown.prevent="startWorkspaceDividerDrag"
+  ></div>
 
   <NodeModal
     :show="showNodeModal"
@@ -141,6 +154,9 @@
     :log-panel-height="logStore.logPanelHeight.value"
     :initial-file="workspaceModalStore.initialFile"
     :initial-line="workspaceModalStore.initialLine"
+    :docked="workspaceDocked"
+    :docked-width="logStore.dockedWorkspaceWidth.value"
+    :docked-height="logStore.logPanelHeight.value"
     @close="closeWorkspaceModal"
     @start-node="handleStart"
   />
@@ -615,6 +631,26 @@ function closeWorkspaceModal() {
   workspaceModalStore.nodeName = null
   workspaceModalStore.initialFile = null
   workspaceModalStore.initialLine = null
+}
+
+// Workspace docks alongside the footer panel when the same node is open
+// in both, with a draggable vertical divider separating them.
+const workspaceDocked = computed(() =>
+  workspaceModalStore.show &&
+  !!logStore.selectedNode.value &&
+  workspaceModalStore.nodeGuid === logStore.selectedNode.value
+)
+const workspaceDividerDragging = ref(false)
+function startWorkspaceDividerDrag() {
+  workspaceDividerDragging.value = true
+  const onMove = (ev) => logStore.applyDockedWorkspaceWidth(ev.clientX)
+  const onUp = () => {
+    workspaceDividerDragging.value = false
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
 }
 
 // ── Logs ────────────────────────────────────
