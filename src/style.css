@@ -453,6 +453,7 @@ button:active {
   position: relative;
   display: flex;
   align-items: center;
+  margin-left: auto;
 }
 
 .card-meta-info {
@@ -850,6 +851,68 @@ button:active {
 
 .log-resize-handle:hover::after {
   background: var(--text-dim);
+}
+
+.workspace-dock-divider {
+  position: fixed;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  cursor: ew-resize;
+  z-index: 41;
+  background: transparent;
+  transition: background 0.15s;
+}
+.workspace-dock-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 40px;
+  margin-left: -1.5px;
+  margin-top: -20px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.workspace-dock-divider:hover::after,
+.workspace-dock-divider.dragging::after {
+  background: var(--text-dim);
+}
+.workspace-dock-divider.dragging {
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.workspace-docked-wrapper {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace-modal.workspace-modal-docked {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none;
+  background: var(--bg);
+  padding: 8px 12px !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+.workspace-modal.workspace-modal-docked .workspace-header {
+  margin-bottom: 6px;
+}
+.workspace-modal.workspace-modal-docked h2 {
+  font-size: 13px;
+  margin-bottom: 0;
 }
 
 .log-header {
@@ -2275,11 +2338,34 @@ button:active {
 }
 
 .workspace-terminal-tab,
-.workspace-file-tab {
+.workspace-file-tab,
+.workspace-image-tab {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.workspace-image-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-conic-gradient(
+    color-mix(in srgb, var(--surface), transparent 60%) 0% 25%,
+    transparent 0% 50%
+  ) 0 0 / 16px 16px;
+  padding: 12px;
+}
+.workspace-image-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  background: var(--surface);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
 .workspace-resizer {

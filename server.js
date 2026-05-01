@@ -799,6 +799,25 @@ app.get('/api/processes/:id/file', (req, res) => {
   }
 });
 
+app.get('/api/processes/:id/file-raw', (req, res) => {
+  const id = req.params.id;
+  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+
+  const resolvedCwd = resolveTemplate(config.cwd);
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path is required' });
+
+  const fullPath = path.resolve(resolvedCwd, filePath);
+  if (!fullPath.startsWith(resolvedCwd)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  res.sendFile(fullPath, (err) => {
+    if (err && !res.headersSent) res.status(err.statusCode || 500).json({ error: err.message });
+  });
+});
+
 app.put('/api/processes/:id/file', (req, res) => {
   const id = req.params.id;
   const config = processConfigs.find((c) => c.guid === id || c.name === id);

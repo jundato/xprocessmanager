@@ -2,13 +2,14 @@
   <div
     class="xterm-panel"
     :class="{ hidden: !nodeName, dragging, 'drag-over': dragOverTerminal }"
-    :style="{ height: panelHeight + 'px' }"
+    :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
   >
     <div
+      v-if="node?.type !== 'agent'"
       class="log-resize-handle"
       @mousedown.prevent="startDrag"
       @touchstart.prevent="startDragTouch"
@@ -63,12 +64,7 @@
       @drop.stop.prevent="onDrop"
     >
       <i class="fa-solid fa-file-import"></i>
-      <p>Drop files here to upload to {{ nodeName }}</p>
-    </div>
-
-    <div v-if="uploading" class="terminal-upload-overlay">
-      <i class="fa-solid fa-spinner fa-spin"></i>
-      <p>Uploading {{ uploadCount }} files...</p>
+      <p>Drop files here to reference in {{ nodeName }}</p>
     </div>
   </div>
 </template>
@@ -86,6 +82,7 @@ const props = defineProps({
   panelHeight: { type: Number, default: 400 },
   workspaceOpen: { type: Boolean, default: false },
   terminalWidth: { type: Number, default: 200 },
+  leftOffset: { type: Number, default: 0 },
 })
 
 const { addNotification } = useNotifications()
@@ -188,34 +185,47 @@ onUnmounted(() => {
   disconnectWs()
 })
 
-// File Drag & Drop logic...
+// File Drag & Drop: insert dropped files' absolute paths into the terminal.
 const dragOverTerminal = ref(false)
-const uploading = ref(false)
-const uploadCount = ref(0)
 
 function onDragEnter() { dragOverTerminal.value = true }
 function onDragLeave() { dragOverTerminal.value = false }
 function onDragOver() {}
 
+// POSIX-safe shell quoting. Single-quote the path and escape embedded quotes.
+function shellQuote(p) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(p)) return p
+  return `'${p.replace(/'/g, `'\\''`)}'`
+}
+
+// Browsers don't expose absolute paths from Finder/Explorer drags. The server
+// resolves the dropped filename against the node's cwd and returns the
+// absolute path, which we then insert into the terminal.
 async function onDrop(ev) {
   dragOverTerminal.value = false
   const files = ev.dataTransfer?.files
-  if (!files || files.length === 0) return
+  if (!files || files.length === 0 || !nodeGuid.value) return
 
-  uploading.value = true
-  uploadCount.value = files.length
-  
-  try {
-    for (const file of files) {
-      const formData = new FormData()
-      formData.append('file', file)
-      await api(`/api/processes/${encodeURIComponent(nodeGuid.value)}/upload`, 'POST', formData)
+  const resolved = []
+  for (const file of files) {
+    try {
+      const result = await api(
+        `/api/processes/${encodeURIComponent(nodeGuid.value)}/file-path`,
+        'POST',
+        { path: file.name }
+      )
+      if (result?.fullPath) resolved.push(result.fullPath)
+      else throw new Error(result?.error || 'no path returned')
+    } catch (err) {
+      addNotification(`Could not resolve path for ${file.name}: ${err.message}`, 'error')
     }
-    addNotification(`Successfully uploaded ${files.length} files to ${nodeName.value}`)
-  } catch (err) {
-    addNotification(`Upload failed: ${err.message}`, 'error')
-  } finally {
-    uploading.value = false
+  }
+  if (resolved.length === 0) return
+
+  const text = resolved.map(shellQuote).join(' ') + ' '
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'input', data: text }))
+    terminalRef.value?.focus()
   }
 }
 
@@ -274,14 +284,5 @@ function startDragTouch() {
   align-items: center; justify-content: center;
   z-index: 100; border: 2px dashed var(--blue);
   margin: 8px; border-radius: 8px; color: var(--blue);
-}
-.terminal-upload-overlay {
-  position: absolute;
-  bottom: 20px; right: 20px;
-  background: var(--surface2);
-  padding: 12px 20px; border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  display: flex; align-items: center; gap: 12px;
-  z-index: 101; border: 1px solid var(--border);
 }
 </style>

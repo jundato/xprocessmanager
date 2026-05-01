@@ -2,9 +2,10 @@
   <div
     class="log-panel"
     :class="{ hidden: !selectedNode, dragging }"
-    :style="{ height: panelHeight + 'px' }"
+    :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
   >
     <div
+      v-if="node?.type !== 'agent'"
       class="log-resize-handle"
       @mousedown.prevent="startDrag"
       @touchstart.prevent="startDragTouch"
@@ -85,6 +86,7 @@ const props = defineProps({
   lastRefresh: { type: String, default: '' },
   panelHeight: { type: Number, default: 300 },
   workspaceOpen: { type: Boolean, default: false },
+  leftOffset: { type: Number, default: 0 },
 })
 
 const typeIcon = computed(() => {
