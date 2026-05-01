@@ -8,7 +8,7 @@
     @check-remote-updates="handleCheckAllRemote"
   />
 
-  <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (logStore.logPanelHeight.value + 16) + 'px' : '' }">
+  <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (effectivePanelHeight + 16) + 'px' : '' }">
     <div class="toolbar-section">
       <span class="toolbar-label">View</span>
       <button class="toolbar-btn" :class="{ active: viewMode === 'group' }" @click="viewMode = 'group'">Group</button>
@@ -25,7 +25,7 @@
 
   <div
     class="container"
-    :style="{ paddingBottom: logStore.selectedNode.value ? (logStore.logPanelHeight.value + 20) + 'px' : '' }"
+    :style="{ paddingBottom: logStore.selectedNode.value ? (effectivePanelHeight + 20) + 'px' : '' }"
   >
     <NodeGrid
       :sorted-groups="displayGroups"
@@ -73,7 +73,7 @@
   <XTermPanel
     v-if="selectedIsPty"
     :node="selectedNodeObject"
-    :panel-height="logStore.logPanelHeight.value"
+    :panel-height="effectivePanelHeight"
     :terminal-width="settingsStore.sysTerminalWidth.value"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
     :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
@@ -96,7 +96,7 @@
     :selected-node="logStore.selectedNode.value"
     :logs="logStore.logs.value"
     :last-refresh="logStore.lastRefresh.value"
-    :panel-height="logStore.logPanelHeight.value"
+    :panel-height="effectivePanelHeight"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
     :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
@@ -116,7 +116,7 @@
     :class="{ dragging: workspaceDividerDragging }"
     :style="{
       left: logStore.dockedWorkspaceWidth.value + 'px',
-      height: logStore.logPanelHeight.value + 'px',
+      height: effectivePanelHeight + 'px',
     }"
     @mousedown.prevent="startWorkspaceDividerDrag"
   ></div>
@@ -151,12 +151,12 @@
     :node-name="workspaceModalStore.nodeName"
     :node-status="workspaceModalStatus"
     :is-agent="workspaceModalIsAgent"
-    :log-panel-height="logStore.logPanelHeight.value"
+    :log-panel-height="effectivePanelHeight"
     :initial-file="workspaceModalStore.initialFile"
     :initial-line="workspaceModalStore.initialLine"
     :docked="workspaceDocked"
     :docked-width="logStore.dockedWorkspaceWidth.value"
-    :docked-height="logStore.logPanelHeight.value"
+    :docked-height="effectivePanelHeight"
     @close="closeWorkspaceModal"
     @start-node="handleStart"
   />
@@ -743,9 +743,20 @@ watch(() => logStore.selectedNode.value, () => {
 })
 
 // ── Window and Global Drag/Drop handlers ───────────────────
+const viewportHeight = ref(window.innerHeight)
 function onResize() {
   popoverStore.onWindowResize()
+  viewportHeight.value = window.innerHeight
 }
+
+// Agent panels max out the footer height; non-agent nodes use the
+// user-resizable logPanelHeight. Drag handle is hidden in the agent case
+// (see XTermPanel/LogPanel) so logPanelHeight is left untouched.
+const effectivePanelHeight = computed(() =>
+  selectedNodeObject.value?.type === 'agent'
+    ? Math.max(120, viewportHeight.value - 60)
+    : logStore.logPanelHeight.value
+)
 
 // Suppress the browser's default file-drop behavior (navigating to the file)
 // when nothing inside the app handled the drop. Bubble phase + no

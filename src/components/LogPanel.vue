@@ -5,6 +5,7 @@
     :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
   >
     <div
+      v-if="node?.type !== 'agent'"
       class="log-resize-handle"
       @mousedown.prevent="startDrag"
       @touchstart.prevent="startDragTouch"

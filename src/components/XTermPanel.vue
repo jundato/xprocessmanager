@@ -9,6 +9,7 @@
     @drop.prevent="onDrop"
   >
     <div
+      v-if="node?.type !== 'agent'"
       class="log-resize-handle"
       @mousedown.prevent="startDrag"
       @touchstart.prevent="startDragTouch"
