@@ -711,14 +711,15 @@ function onResize() {
   popoverStore.onWindowResize()
 }
 
+// Suppress the browser's default file-drop behavior (navigating to the file)
+// when nothing inside the app handled the drop. Bubble phase + no
+// stopPropagation so child drop zones still receive their events.
 function onGlobalDragOver(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
+  if (!ev.defaultPrevented) ev.preventDefault()
 }
 
 function onGlobalDrop(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
+  if (!ev.defaultPrevented) ev.preventDefault()
 }
 
 // ── Lifecycle ───────────────────────────────
@@ -726,14 +727,14 @@ onMounted(async () => {
   await nodeStore.refresh()
   await applyPollIntervals()
   window.addEventListener('resize', onResize)
-  document.addEventListener('dragover', onGlobalDragOver, true)
-  document.addEventListener('drop', onGlobalDrop, true)
+  document.addEventListener('dragover', onGlobalDragOver)
+  document.addEventListener('drop', onGlobalDrop)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
-  document.removeEventListener('dragover', onGlobalDragOver, true)
-  document.removeEventListener('drop', onGlobalDrop, true)
+  document.removeEventListener('dragover', onGlobalDragOver)
+  document.removeEventListener('drop', onGlobalDrop)
   nodeStore.stopPolling()
   logStore.stopLogPolling()
 })
