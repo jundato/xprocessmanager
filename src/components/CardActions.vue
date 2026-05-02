@@ -140,7 +140,8 @@ defineExpose({ mainActionBtn, focusMain })
 
 const isGemini = computed(() => {
   const cmd = String(props.node.command || '').toLowerCase()
-  return cmd.includes('gemini')
+  const name = String(props.node.name || '').toLowerCase()
+  return cmd.includes('gemini') || name.includes('gemini')
 })
 
 const showSessions = ref(false)
