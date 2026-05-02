@@ -1,27 +1,32 @@
 [
   {
-    "guid": "adea8eb3-1263-4c40-a2d6-a71b77355750",
+    "guid": "3c42aa4e-0b03-4f74-b19d-51e316ec8304",
     "name": "frontend-infra",
     "color": "#888888"
   },
   {
-    "guid": "20d6d606-5d8a-4854-a507-2106194bb53d",
+    "guid": "79f9070a-c2a3-4b3e-801c-838b17977806",
     "name": "infra",
     "color": "#a78bfa"
   },
   {
-    "guid": "5785db36-6a57-4e9c-8a6c-54dbe999736a",
+    "guid": "6eb6b851-070e-475d-8700-e2ec2e64590b",
     "name": "devs",
     "color": "#001eff"
   },
   {
-    "guid": "9f365bb6-c18c-446d-b18f-c5cc614f8ccc",
+    "guid": "46c849e2-67a7-4f0c-b786-ae557a0252d1",
     "name": "backend",
     "color": "#888888"
   },
   {
-    "guid": "17bdbc09-2a5a-4f5c-bf6e-34e4563cd130",
+    "guid": "3697f552-6c07-4d1a-a813-41f3ffde0ed3",
     "name": "dreamout",
     "color": "#ff0000"
+  },
+  {
+    "guid": "f90087d5-0402-44e2-9411-33461b07c4c3",
+    "name": "deployment",
+    "color": "#00ff88"
   }
 ]

@@ -6,6 +6,7 @@
     @add-node="openAddModal"
     @open-settings="settingsStore.openSettings"
     @check-remote-updates="handleCheckAllRemote"
+    @open-notifications="showNotificationHistory = true"
   />
 
   <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (effectivePanelHeight + 16) + 'px' : '' }">
@@ -161,6 +162,7 @@
     @start-node="handleStart"
   />
   <AlertModal />
+  <NotificationHistoryModal :show="showNotificationHistory" @close="showNotificationHistory = false" />
   <NotificationContainer />
   <TaskOverlay />
 
@@ -203,6 +205,7 @@ import NodeModal from './components/NodeModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
 import AlertModal from './components/AlertModal.vue'
+import NotificationHistoryModal from './components/NotificationHistoryModal.vue'
 import NotificationContainer from './components/NotificationContainer.vue'
 import TaskOverlay from './components/TaskOverlay.vue'
 const WorkspaceModal = defineAsyncComponent(() => import('./components/WorkspaceModal.vue'))
@@ -224,6 +227,8 @@ const popoverStore = usePopover()
 const settingsStore = useSettings()
 const { showAlert } = useAlert()
 const { addNotification } = useNotifications()
+
+const showNotificationHistory = ref(false)
 
 // ── Computed ────────────────────────────────
 const selectedIsPty = computed(() => {
