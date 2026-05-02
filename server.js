@@ -1621,8 +1621,24 @@ async function bootstrap() {
     });
   });
 
-  server.listen(PORT, () => {
-    console.log(`Nexus running at http://localhost:${PORT} [${process.env.NODE_ENV || 'production'}]`);
+  server.listen(PORT, '0.0.0.0', () => {
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+    for (const k in interfaces) {
+      for (const k2 in interfaces[k]) {
+        const address = interfaces[k][k2];
+        if (address.family === 'IPv4' && !address.internal) {
+          addresses.push(address.address);
+        }
+      }
+    }
+
+    console.log(`Nexus running at:`);
+    console.log(`  - Local:   http://localhost:${PORT}`);
+    addresses.forEach(addr => {
+      console.log(`  - Network: http://${addr}:${PORT}`);
+    });
+    console.log(`[${process.env.NODE_ENV || 'production'}]`);
   });
 }
 

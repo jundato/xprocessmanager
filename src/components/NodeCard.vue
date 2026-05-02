@@ -15,18 +15,20 @@
       <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="color: #fbbf24;" title="Waiting for input..."></i>
     </div>
     <div class="card-header">
-      <div v-if="agentTag" class="agent-tag-wrapper">
-        <span class="agent-tag">
-          <img :src="agentTag.icon" class="agent-tag-icon" :alt="agentTag.name" />
-          {{ agentTag.name }}
-        </span>
+      <div class="card-header-left">
+        <div v-if="agentTag" class="agent-tag-wrapper">
+          <span class="agent-tag">
+            <img :src="agentTag.icon" class="agent-tag-icon" :alt="agentTag.name" />
+            {{ agentTag.name }}
+          </span>
+        </div>
+        <GitBranchTag
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
       </div>
-      <GitBranchTag
-        :node="node"
-        @branch-click="$emit('branch-click', $event)"
-        @pull-git="(...args) => $emit('pull-git', ...args)"
-        @push-git="(...args) => $emit('push-git', ...args)"
-      />
       <div class="card-header-right">
         <div class="card-meta-info">
           <span class="pid-badge" title="PID"><i class="fa-solid fa-hashtag mr-1"></i>{{ node.pid || '-' }}</span>

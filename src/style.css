@@ -404,6 +404,14 @@ button:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .node-type-icon {
@@ -477,12 +485,17 @@ button:active {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 0 6px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   font-family: 'SF Mono', 'Fira Code', monospace;
   color: var(--purple);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+  line-height: 1;
 }
 
 .branch-tag:hover {
@@ -499,19 +512,22 @@ button:active {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 0 6px;
+  height: 20px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text);
   display: flex;
   align-items: center;
   gap: 4px;
+  line-height: 1;
 }
 
 .agent-tag-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   display: block;
+  flex-shrink: 0;
 }
 
 .branch-tag-group {
@@ -524,7 +540,8 @@ button:active {
   background: var(--surface2);
   border: 1px solid var(--card-color, var(--border));
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 0 6px;
+  height: 20px;
   font-size: 10px;
   color: var(--text-dim);
   cursor: pointer;
