@@ -15,12 +15,20 @@
       <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="color: #fbbf24;" title="Waiting for input..."></i>
     </div>
     <div class="card-header">
-      <GitBranchTag
-        :node="node"
-        @branch-click="$emit('branch-click', $event)"
-        @pull-git="(...args) => $emit('pull-git', ...args)"
-        @push-git="(...args) => $emit('push-git', ...args)"
-      />
+      <div class="card-header-left">
+        <div v-if="agentTag" class="agent-tag-wrapper">
+          <span class="agent-tag">
+            <img :src="agentTag.icon" class="agent-tag-icon" :alt="agentTag.name" />
+            {{ agentTag.name }}
+          </span>
+        </div>
+        <GitBranchTag
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
+      </div>
       <div class="card-header-right">
         <div class="card-meta-info">
           <span class="pid-badge" title="PID"><i class="fa-solid fa-hashtag mr-1"></i>{{ node.pid || '-' }}</span>
@@ -53,6 +61,10 @@ import { useNotifications } from '../composables/useNotifications.js'
 import CardActions from './CardActions.vue'
 import GitBranchTag from './GitBranchTag.vue'
 
+import geminiIcon from '../assets/gemini.svg'
+import cursorIcon from '../assets/cursor.svg'
+import claudeIcon from '../assets/claude.svg'
+
 const props = defineProps({
   node: { type: Object, required: true },
   borderColor: { type: String, default: '#4b5563' },
@@ -76,6 +88,18 @@ const TYPE_ICONS = {
 }
 
 const typeIcon = computed(() => TYPE_ICONS[props.node.type] || 'fa-solid fa-circle')
+
+const agentTag = computed(() => {
+  if (props.node.type !== 'agent') return null
+  const cmd = String(props.node.command || '').toLowerCase()
+  const name = String(props.node.name || '').toLowerCase()
+  
+  if (cmd.includes('gemini') || name.includes('gemini')) return { name: 'Gemini', icon: geminiIcon }
+  if (cmd.includes('cursor') || name.includes('cursor')) return { name: 'Cursor', icon: cursorIcon }
+  if (cmd.includes('claude') || name.includes('claude')) return { name: 'Claude', icon: claudeIcon }
+  
+  return null
+})
 
 function formatUptime(ms) {
   if (!ms) return '-'

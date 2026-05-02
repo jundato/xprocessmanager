@@ -1,6 +1,9 @@
 <template>
   <div v-if="node.branch" class="branch-tag-group" @click.stop>
-    <span class="branch-tag" @click.stop="$emit('branch-click', node.guid)">{{ node.branch }}</span>
+    <span class="branch-tag" @click.stop="$emit('branch-click', node.guid)">
+      <i class="fa-solid fa-code-branch"></i>
+      {{ node.branch }}
+    </span>
     <button
       v-if="gitRemoteStatus === 'behind'"
       class="btn-git-action btn-pull"
