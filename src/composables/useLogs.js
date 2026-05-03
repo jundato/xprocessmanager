@@ -66,7 +66,7 @@ export function useLogs() {
   }
 
   function applyLogPanelHeight(h) {
-    const height = Math.max(120, Math.min(h, window.innerHeight - 60))
+    const height = Math.max(120, Math.min(h, window.innerHeight - 70))
     logPanelHeight.value = height
     localStorage.setItem('xpm-log-height', height)
   }
