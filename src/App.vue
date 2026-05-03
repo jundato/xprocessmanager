@@ -759,7 +759,7 @@ function onResize() {
 // (see XTermPanel/LogPanel) so logPanelHeight is left untouched.
 const effectivePanelHeight = computed(() =>
   selectedNodeObject.value?.type === 'agent'
-    ? Math.max(120, viewportHeight.value - 60)
+    ? Math.max(120, viewportHeight.value - 70)
     : logStore.logPanelHeight.value
 )
 

@@ -1589,28 +1589,31 @@ async function bootstrap() {
 
     // Client → Process (keyboard input + resize)
     ws.on('message', (msg) => {
+      const currentEntry = processes.get(guid);
+      if (!currentEntry) return;
+
       try {
         const parsed = JSON.parse(msg);
         if (parsed.type === 'resize') {
-          if (entry.ptyProc) {
-            entry.ptyProc.resize(
+          if (currentEntry.ptyProc) {
+            currentEntry.ptyProc.resize(
               Math.min(parsed.cols, 300),
               Math.min(parsed.rows, 100)
             );
           }
         } else if (parsed.type === 'input') {
-          if (entry.ptyProc) {
-            entry.ptyProc.write(parsed.data);
-          } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
-            entry.proc.stdin.write(parsed.data);
+          if (currentEntry.ptyProc) {
+            currentEntry.ptyProc.write(parsed.data);
+          } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {
+            currentEntry.proc.stdin.write(parsed.data);
           }
         }
       } catch {
         const data = msg.toString();
-        if (entry.ptyProc) {
-          entry.ptyProc.write(data);
-        } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
-          entry.proc.stdin.write(data);
+        if (currentEntry.ptyProc) {
+          currentEntry.ptyProc.write(data);
+        } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {
+          currentEntry.proc.stdin.write(data);
         }
       }
     });

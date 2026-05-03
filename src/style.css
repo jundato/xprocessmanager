@@ -1063,7 +1063,7 @@ button:active {
 
 .modal-overlay.align-top {
   align-items: flex-start;
-  padding-top: 60px;
+  padding-top: 70px;
 }
 
 .modal {
@@ -1778,14 +1778,14 @@ button:active {
 /* ── Workspace Modal ─────────────────────── */
 .workspace-modal {
   width: 520px;
-  max-height: calc(100vh - 60px);
+  max-height: calc(100vh - 70px);
   display: flex;
   flex-direction: column;
 }
 
 .workspace-modal-editor {
   width: min(900px, 90vw);
-  height: calc(100vh - 80px);
+  height: calc(100vh - 70px);
 }
 
 .workspace-modal-editor.workspace-modal-with-term {
