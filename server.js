@@ -221,9 +221,13 @@ function checkNeedsInput(entry, text) {
 
 function resolveTemplate(str) {
   if (!str) return str;
-  return str.replace(/\{(\w+)\}/g, (match, key) => {
+  let resolved = str.replace(/\{(\w+)\}/g, (match, key) => {
     return envVars[key] !== undefined ? envVars[key] : match;
   });
+  if (resolved.startsWith('~')) {
+    resolved = path.join(os.homedir(), resolved.slice(1));
+  }
+  return resolved;
 }
 
 function getGitBranch(cwd) {
@@ -327,7 +331,7 @@ function triggerOnSuccess(entry, config) {
 }
 
 function getGeminiPath() {
-  const possible = ['/opt/homebrew/bin/gemini', '/usr/local/bin/gemini', 'gemini'];
+  const possible = ['/usr/local/bin/gemini', '/opt/homebrew/bin/gemini', 'gemini'];
   for (const p of possible) {
     if (p.startsWith('/') && fs.existsSync(p)) return p;
   }
@@ -598,17 +602,8 @@ function listGeminiSessions(cwd) {
       return sessions;
     };
 
-    exec(`node ${gemini} --list-sessions`, execOpts, (error, stdout, stderr) => {
-      if (error && stdout.includes('SyntaxError')) {
-        const brewNode = '/opt/homebrew/bin/node';
-        const brewGemini = '/opt/homebrew/bin/gemini';
-        if (fs.existsSync(brewNode) && fs.existsSync(brewGemini)) {
-          return exec(`${brewNode} ${brewGemini} --list-sessions`, execOpts, (err2, out2, serr2) => {
-            if (err2 && !out2) return reject({ error: err2.message, stderr: serr2 });
-            resolve(parse(out2));
-          });
-        }
-      }
+    const cmd = gemini.startsWith('/') ? `node "${gemini}"` : gemini;
+    exec(`${cmd} --list-sessions`, execOpts, (error, stdout, stderr) => {
       if (error && !stdout) return reject({ error: error.message, stderr });
       resolve(parse(stdout));
     });
@@ -802,6 +797,25 @@ app.get('/api/processes/:id/file', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.get('/api/processes/:id/file-raw', (req, res) => {
+  const id = req.params.id;
+  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+
+  const resolvedCwd = resolveTemplate(config.cwd);
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path is required' });
+
+  const fullPath = path.resolve(resolvedCwd, filePath);
+  if (!fullPath.startsWith(resolvedCwd)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  res.sendFile(fullPath, (err) => {
+    if (err && !res.headersSent) res.status(err.statusCode || 500).json({ error: err.message });
+  });
 });
 
 app.put('/api/processes/:id/file', (req, res) => {
@@ -1237,10 +1251,6 @@ app.post('/api/config/import', (req, res) => {
       skipped.push({ name: item.name || '(unnamed)', reason: 'missing name or command' });
       continue;
     }
-    if (processConfigs.some((c) => c.name === item.name)) {
-      skipped.push({ name: item.name, reason: 'already exists' });
-      continue;
-    }
     const entry = { 
       guid: item.guid || generateGuid(),
       name: item.name, 
@@ -1265,9 +1275,6 @@ app.post('/api/config', (req, res) => {
   const { name, command, args, argsMode, cwd, type, group, stopCommand, usePty, onSuccess, tools } = req.body;
   if (!name || !command) {
     return res.status(400).json({ error: 'name and command are required' });
-  }
-  if (processConfigs.some((c) => c.name === name)) {
-    return res.status(409).json({ error: `Process "${name}" already exists` });
   }
   const entry = { guid: generateGuid(), name, command, args: args || [], argsMode: argsMode || 'raw', type: type || 'service', group: group || 'other' };
   if (cwd) entry.cwd = cwd;
@@ -1301,9 +1308,6 @@ app.put('/api/config/:id', (req, res) => {
     return res.status(400).json({ error: 'command is required' });
   }
   const finalName = (newName && newName.trim()) ? newName.trim() : existing.name;
-  if (finalName !== existing.name && processConfigs.some((c) => c.name === finalName)) {
-    return res.status(409).json({ error: `Process "${finalName}" already exists` });
-  }
   const updated = { 
     guid: existing.guid || generateGuid(),
     name: finalName, 
@@ -1585,28 +1589,31 @@ async function bootstrap() {
 
     // Client → Process (keyboard input + resize)
     ws.on('message', (msg) => {
+      const currentEntry = processes.get(guid);
+      if (!currentEntry) return;
+
       try {
         const parsed = JSON.parse(msg);
         if (parsed.type === 'resize') {
-          if (entry.ptyProc) {
-            entry.ptyProc.resize(
+          if (currentEntry.ptyProc) {
+            currentEntry.ptyProc.resize(
               Math.min(parsed.cols, 300),
               Math.min(parsed.rows, 100)
             );
           }
         } else if (parsed.type === 'input') {
-          if (entry.ptyProc) {
-            entry.ptyProc.write(parsed.data);
-          } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
-            entry.proc.stdin.write(parsed.data);
+          if (currentEntry.ptyProc) {
+            currentEntry.ptyProc.write(parsed.data);
+          } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {
+            currentEntry.proc.stdin.write(parsed.data);
           }
         }
       } catch {
         const data = msg.toString();
-        if (entry.ptyProc) {
-          entry.ptyProc.write(data);
-        } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
-          entry.proc.stdin.write(data);
+        if (currentEntry.ptyProc) {
+          currentEntry.ptyProc.write(data);
+        } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {
+          currentEntry.proc.stdin.write(data);
         }
       }
     });
@@ -1617,8 +1624,24 @@ async function bootstrap() {
     });
   });
 
-  server.listen(PORT, () => {
-    console.log(`Nexus running at http://localhost:${PORT} [${process.env.NODE_ENV || 'production'}]`);
+  server.listen(PORT, '0.0.0.0', () => {
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+    for (const k in interfaces) {
+      for (const k2 in interfaces[k]) {
+        const address = interfaces[k][k2];
+        if (address.family === 'IPv4' && !address.internal) {
+          addresses.push(address.address);
+        }
+      }
+    }
+
+    console.log(`Nexus running at:`);
+    console.log(`  - Local:   http://localhost:${PORT}`);
+    addresses.forEach(addr => {
+      console.log(`  - Network: http://${addr}:${PORT}`);
+    });
+    console.log(`[${process.env.NODE_ENV || 'production'}]`);
   });
 }
 

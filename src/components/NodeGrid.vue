@@ -62,8 +62,7 @@
           @dragend="onDragEnd"
           @drop.prevent="onDrop(p.guid)"
           :class="{ 
-            'drag-over': dragOverGuid === p.guid && dragOverGuid !== dragGuid,
-            'card-agent': p.type === 'agent'
+            'drag-over': dragOverGuid === p.guid && dragOverGuid !== dragGuid
           }"
           @select="$emit('select', $event)"
           @start="$emit('start', $event)"

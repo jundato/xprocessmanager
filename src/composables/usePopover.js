@@ -8,6 +8,7 @@ export function usePopover() {
   // ── Hover popover (single, transient) ──
   const popoverVisible = ref(false)
   const popoverName = ref(null)
+  const popoverNode = ref(null)
   const popoverLogs = ref([])
   const popoverStyle = ref({ left: '0px', top: '0px' })
 
@@ -141,17 +142,12 @@ export function usePopover() {
     if (popoverLogs.value.length > 200) {
       popoverLogs.value = popoverLogs.value.slice(-200)
     }
-
-    await nextTick()
-    if (hoverPopoverEl) {
-      const body = hoverPopoverEl.querySelector('.log-popover-body')
-      if (body) body.scrollTop = body.scrollHeight
-    }
   }
 
-  function openHoverPopover(name, anchorEl) {
+  function openHoverPopover(name, anchorEl, node) {
     hideHoverPopover()
     popoverName.value = name
+    popoverNode.value = node
     hoverSince = 0
     hoverAnchorEl = anchorEl
     popoverLogs.value = []
@@ -178,6 +174,7 @@ export function usePopover() {
       hoverPollTimer = null
     }
     popoverName.value = null
+    popoverNode.value = null
     hoverSince = 0
     hoverAnchorEl = null
     hoverPinned = false
@@ -211,12 +208,12 @@ export function usePopover() {
   }
 
   // ── Card event handlers ──────────────────────
-  function onCardHoverEnter(name, cardEl, immediate = false, command = '') {
+  function onCardHoverEnter(name, cardEl, immediate = false, command = '', node = null) {
     if (immediate) {
       // Open the hover popover right away and keep it open (mouseleave is
       // guarded by `!expanded` on the card, so it won't auto-close).
       hoverPinned = true
-      openHoverPopover(name, cardEl)
+      openHoverPopover(name, cardEl, node)
       return
     }
     // Passive hover — skip if already pinned
@@ -227,11 +224,11 @@ export function usePopover() {
       cancelPopoverHide()
       return
     }
-    const delay = 2000;
+    const delay = 400; // was 2000, now shorter
     clearTimeout(hoverShowTimer)
     hoverShowTimer = setTimeout(() => {
       hoverShowTimer = null
-      openHoverPopover(name, cardEl)
+      openHoverPopover(name, cardEl, node)
     }, delay)
   }
 
@@ -286,6 +283,7 @@ export function usePopover() {
     // Hover
     popoverVisible,
     popoverName,
+    popoverNode,
     popoverLogs,
     popoverStyle,
     popoverPinned,

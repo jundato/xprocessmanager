@@ -2,21 +2,29 @@
   <div
     class="xterm-panel"
     :class="{ hidden: !nodeName, dragging, 'drag-over': dragOverTerminal }"
-    :style="{ height: panelHeight + 'px' }"
+    :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
   >
     <div
+      v-if="node?.type !== 'agent'"
       class="log-resize-handle"
       @mousedown.prevent="startDrag"
       @touchstart.prevent="startDragTouch"
     ></div>
     <div class="log-header">
-      <div class="card-name" style="border: none; background: transparent; padding: 0;">
+      <div class="card-header-left">
         <i :class="[typeIcon, 'node-type-icon', node?.status]" :title="node?.type" style="margin-right: 8px;"></i>
         <span>{{ nodeName }}</span>
+        <GitBranchTag
+          v-if="node"
+          :node="node"
+          @branch-click="$emit('branch-click', $event)"
+          @pull-git="(...args) => $emit('pull-git', ...args)"
+          @push-git="(...args) => $emit('push-git', ...args)"
+        />
       </div>
       <CardActions
         v-if="node"
@@ -37,12 +45,15 @@
         <i class="fa-solid fa-xmark"></i>
       </button>
     </div>
-    <div
-      ref="termContainerRef"
-      class="xterm-container"
-      tabindex="0"
-      @click="focusTerminal"
-    ></div>
+    <div class="xterm-container">
+      <BaseTerminal 
+        ref="terminalRef"
+        :options="{ cursorBlink: true }"
+        @ready="onTerminalReady"
+        @resize="onTerminalResize"
+        @data="onTerminalData"
+      />
+    </div>
     
     <div
       v-if="dragOverTerminal"
@@ -52,33 +63,33 @@
       @dragleave.stop.prevent
       @drop.stop.prevent="onDrop"
     >
-      <i class="fa-solid fa-file-export"></i>
-      <span>Drop to insert path</span>
+      <i class="fa-solid fa-file-import"></i>
+      <p>Drop files here to reference in {{ nodeName }}</p>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { api } from '../composables/useApi'
 import { useNotifications } from '../composables/useNotifications'
 import CardActions from './CardActions.vue'
+import GitBranchTag from './GitBranchTag.vue'
+import BaseTerminal from './BaseTerminal.vue'
 
 const props = defineProps({
   node: { type: Object, default: null },
   panelHeight: { type: Number, default: 400 },
   workspaceOpen: { type: Boolean, default: false },
   terminalWidth: { type: Number, default: 200 },
+  leftOffset: { type: Number, default: 0 },
 })
 
-const { addNotification, removeNotification } = useNotifications()
+const { addNotification } = useNotifications()
 
 const nodeName = computed(() => props.node?.name)
 const nodeGuid = computed(() => props.node?.guid)
-const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit'])
+const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit', 'branch-click', 'pull-git', 'push-git'])
 
 const TYPE_ICONS = {
   service: 'fa-solid fa-server',
@@ -87,299 +98,137 @@ const TYPE_ICONS = {
   script: 'fa-solid fa-scroll',
 }
 
-const typeIcon = computed(() => {
-  if (!props.node) return 'fa-solid fa-circle'
-  if (props.node.type === 'script' && props.node.status === 'running') return 'fa-solid fa-spinner script-running-spinner'
-  return TYPE_ICONS[props.node.type] || 'fa-solid fa-circle'
-})
+const typeIcon = computed(() => TYPE_ICONS[props.node?.type] || 'fa-solid fa-circle')
 
-const termContainerRef = ref(null)
+const terminalRef = ref(null)
 const dragging = ref(false)
-const dragOverTerminal = ref(false)
 const cardActionsRef = ref(null)
-let dragCounter = 0
-
-function applyInitialFocus() {
-  const isAgent = props.node?.type === 'agent'
-  const isRunning = props.node?.status === 'running'
-
-  if (isAgent && isRunning) {
-    // For running agents, focus the terminal
-    let attempts = 0
-    const tryFocusTerm = () => {
-      if (term) {
-        term.focus()
-      } else if (attempts < 20) {
-        attempts++
-        requestAnimationFrame(tryFocusTerm)
-      }
-    }
-    tryFocusTerm()
-  } else {
-    // For non-running agents, or any other node type, focus the main action button
-    focusMainAction()
-  }
-}
-
-function focusMainAction() {
-  let attempts = 0
-  const tryFocus = () => {
-    if (cardActionsRef.value?.focusMain()) {
-      // success
-    } else if (attempts < 20) {
-      attempts++
-      requestAnimationFrame(tryFocus)
-    }
-  }
-  tryFocus()
-}
-
-// Focus logic when node opens or status changes
-watch(() => props.node, (newVal, oldVal) => {
-  if (newVal?.name) {
-    // Only trigger if node changed or status changed
-    if (newVal.name !== oldVal?.name || newVal.status !== oldVal?.status) {
-      if (!oldVal) {
-        // First mount - wait a bit for animation
-        setTimeout(applyInitialFocus, 100)
-      } else {
-        applyInitialFocus()
-      }
-    }
-  }
-}, { immediate: true, deep: true })
-
-let term = null
-let fitAddon = null
 let ws = null
-let resizeObserver = null
+let wsRetryTimer = null
 
-function createTerminal() {
-  if (term) {
-    if (termContainerRef.value && !term.element) {
-      term.open(termContainerRef.value)
-      setupResizeObserver()
-      fitWide()
-    }
+function onTerminalReady() {
+  if (nodeGuid.value) {
+    connectWs(nodeGuid.value)
+  }
+}
+
+function onTerminalResize({ cols, rows }) {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+  }
+}
+
+function onTerminalData(data) {
+  if (data === '\x1b[?1;2c' || data === '\x1b[?62;c' || data === '\x1b[?6c') {
     return
   }
-  if (!termContainerRef.value) return
-
-  term = new Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-    theme: {
-      background: '#0f1117',
-      foreground: '#e1e4ed',
-      cursor: '#60a5fa',
-      selectionBackground: 'rgba(96, 165, 250, 0.3)',
-      black: '#1a1d27',
-      red: '#f87171',
-      green: '#34d399',
-      yellow: '#fbbf24',
-      blue: '#60a5fa',
-      magenta: '#a78bfa',
-      cyan: '#22d3ee',
-      white: '#e1e4ed',
-      brightBlack: '#8b8fa3',
-      brightRed: '#fca5a5',
-      brightGreen: '#6ee7b7',
-      brightYellow: '#fde68a',
-      brightBlue: '#93c5fd',
-      brightMagenta: '#c4b5fd',
-      brightCyan: '#67e8f9',
-      brightWhite: '#f8fafc',
-    },
-    allowProposedApi: true,
-  })
-
-  fitAddon = new FitAddon()
-  term.loadAddon(fitAddon)
-  term.loadAddon(new WebLinksAddon())
-
-  // Custom link provider for file paths
-  term.registerLinkProvider({
-    provideLinks(bufferLineNumber, callback) {
-      const line = term.buffer.active.getLine(bufferLineNumber - 1).translateToString(true)
-      // Detect common file path patterns like:
-      // ./src/App.vue, src/main.js:10, /abs/path/file.py:20:5, node_modules/@vue/sfc.js
-      // This regex looks for things that look like paths and potentially have a line number.
-      // We exclude leading/trailing spaces and handle optional line/column numbers.
-      const pathRegex = /(?:\.?\.\/|\/|[a-zA-Z]:\\|[a-zA-Z0-9._\-\@]+\/)[a-zA-Z0-9\._\-\/\@\\]+\.[a-zA-Z0-9]+(?::\d+)?(?::\d+)?/g
-      let match
-      const links = []
-      while ((match = pathRegex.exec(line)) !== null) {
-        const fullMatch = match[0]
-        const startIndex = match.index
-        
-        // Basic parsing: split by colon
-        const parts = fullMatch.split(':')
-        const filePath = parts[0]
-        const lineNumber = parts.length > 1 ? parseInt(parts[1]) : null
-        
-        links.push({
-          range: {
-            start: { x: startIndex + 1, y: bufferLineNumber },
-            end: { x: startIndex + fullMatch.length, y: bufferLineNumber }
-          },
-          text: fullMatch,
-          activate: () => {
-            if (nodeGuid.value) {
-              emit('open-workspace', nodeGuid.value, filePath, lineNumber)
-            }
-          }
-        })
-      }
-      callback(links)
-    }
-  })
-
-  // ALWAYS open before anything else
-  term.open(termContainerRef.value)
-  setupResizeObserver()
-
-  // Send terminal size changes to server
-  term.onResize(({ cols, rows }) => {
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'resize', cols, rows }))
-    }
-  })
-
-  // Send keyboard input to server
-  term.onData((data) => {
-    // Filter out automatic terminal identification responses that can cause loops
-    // especially with processes that echo stdin or are not in raw mode.
-    if (data === '\x1b[?1;2c' || data === '\x1b[?62;c' || data === '\x1b[?6c') {
-      return
-    }
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'input', data }))
-    }
-  })
-
-  fitWide()
-}
-
-function setupResizeObserver() {
-  if (resizeObserver) {
-    resizeObserver.disconnect()
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'input', data }))
   }
-  if (!termContainerRef.value) return
-  resizeObserver = new ResizeObserver(() => {
-    fitWide()
-  })
-  resizeObserver.observe(termContainerRef.value)
 }
 
 function focusTerminal() {
-  if (term) {
-    term.focus()
-  }
+  terminalRef.value?.focus()
 }
-
-function destroyTerminal() {
-  if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
-  if (term) { term.dispose(); term = null; fitAddon = null }
-}
-
-let wsRetryTimer = null
 
 function connectWs(id) {
   disconnectWs()
   if (!id) return
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${proto}//${location.host}/ws/terminal?id=${encodeURIComponent(id)}`
-  const localWs = new WebSocket(url)
-  ws = localWs
+  const wsUrl = `${proto}//${location.host}/ws/terminal?id=${id}`
+  ws = new WebSocket(wsUrl)
 
-  localWs.onopen = () => {
-    if (term) {
-      fitWide()
-      // Only auto-focus terminal if it's an agent that's ALREADY running
-      if (props.node?.type === 'agent' && props.node?.status === 'running') {
-        nextTick(() => term.focus())
-      }
-    }
+  ws.onopen = () => {
+    console.log(`[xpm] Connected to ${id}`)
+    terminalRef.value?.fit()
   }
 
-  localWs.onmessage = (ev) => {
-    if (ws === localWs && term) term.write(ev.data)
+  ws.onmessage = (event) => {
+    terminalRef.value?.write(event.data)
   }
 
-  localWs.onclose = () => {
-    if (ws !== localWs) return
-    ws = null
+  ws.onclose = () => {
+    console.log(`[xpm] Disconnected from ${id}`)
     if (nodeGuid.value === id) {
-      wsRetryTimer = setTimeout(() => connectWs(id), 1500)
+      wsRetryTimer = setTimeout(() => connectWs(id), 2000)
     }
   }
-  localWs.onerror = () => {}
 }
 
 function disconnectWs() {
-  if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null }
-  if (ws) { ws.close(); ws = null }
+  if (ws) {
+    ws.onclose = null
+    ws.close()
+    ws = null
+  }
+  if (wsRetryTimer) {
+    clearTimeout(wsRetryTimer)
+    wsRetryTimer = null
+  }
 }
 
-// When node status changes to running, attempt to reconnect immediately.
-// If the PTY isn't ready yet, the onclose retry loop will keep trying every 1500ms.
-watch(() => props.node?.status, (status, oldStatus) => {
-  if (status === 'running' && oldStatus !== 'running' && nodeGuid.value) {
-    connectWs(nodeGuid.value)
-  }
-})
-
-// When nodeGuid changes, reconnect
-watch(nodeGuid, async (guid, oldGuid) => {
-  if (guid && guid !== oldGuid) {
-    if (!term) createTerminal()
-    else { term.clear(); fitWide() }
+watch(() => nodeGuid.value, (guid) => {
+  if (guid) {
     connectWs(guid)
-    await nextTick()
-    applyInitialFocus()
-  } else if (!guid) {
+    terminalRef.value?.clear()
+  } else {
     disconnectWs()
   }
-}, { immediate: false })
-
-function fitWide() {
-  if (!fitAddon || !term || !term.element) return
-  const dims = fitAddon.proposeDimensions()
-  if (dims && dims.cols > 0 && dims.rows > 0) {
-    term.resize(props.terminalWidth, dims.rows)
-  } else {
-    // Retry once if zero dimensions (often means container not yet visible)
-    setTimeout(() => {
-      if (!fitAddon || !term) return
-      const d2 = fitAddon.proposeDimensions()
-      if (d2 && d2.cols > 0 && d2.rows > 0) term.resize(props.terminalWidth, d2.rows)
-    }, 50)
-  }
-}
-
-// Refit when panel height changes
-watch(() => props.panelHeight, () => {
-  nextTick(() => fitWide())
 })
 
-onMounted(() => {
-  if (nodeGuid.value) {
-    createTerminal()
-    connectWs(nodeGuid.value)
-    nextTick(() => {
-      fitWide()
-    })
-  }
+watch(() => props.panelHeight, () => {
+  nextTick(() => terminalRef.value?.fit())
 })
 
 onUnmounted(() => {
   disconnectWs()
-  destroyTerminal()
 })
 
-// Drag resize (same pattern as LogPanel)
+// File Drag & Drop: insert dropped files' absolute paths into the terminal.
+const dragOverTerminal = ref(false)
+
+function onDragEnter() { dragOverTerminal.value = true }
+function onDragLeave() { dragOverTerminal.value = false }
+function onDragOver() {}
+
+// POSIX-safe shell quoting. Single-quote the path and escape embedded quotes.
+function shellQuote(p) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(p)) return p
+  return `'${p.replace(/'/g, `'\\''`)}'`
+}
+
+// Browsers don't expose absolute paths from Finder/Explorer drags. The server
+// resolves the dropped filename against the node's cwd and returns the
+// absolute path, which we then insert into the terminal.
+async function onDrop(ev) {
+  dragOverTerminal.value = false
+  const files = ev.dataTransfer?.files
+  if (!files || files.length === 0 || !nodeGuid.value) return
+
+  const resolved = []
+  for (const file of files) {
+    try {
+      const result = await api(
+        `/api/processes/${encodeURIComponent(nodeGuid.value)}/file-path`,
+        'POST',
+        { path: file.name }
+      )
+      if (result?.fullPath) resolved.push(result.fullPath)
+      else throw new Error(result?.error || 'no path returned')
+    } catch (err) {
+      addNotification(`Could not resolve path for ${file.name}: ${err.message}`, 'error')
+    }
+  }
+  if (resolved.length === 0) return
+
+  const text = resolved.map(shellQuote).join(' ') + ' '
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'input', data: text }))
+    terminalRef.value?.focus()
+  }
+}
+
 function startDrag() {
   dragging.value = true
   const onMove = (ev) => emit('resize', window.innerHeight - ev.clientY)
@@ -403,111 +252,37 @@ function startDragTouch() {
   document.addEventListener('touchmove', onMove)
   document.addEventListener('touchend', onEnd)
 }
-
-// File Drag & Drop
-function onDragEnter(ev) {
-  ev.preventDefault()
-  dragCounter++
-  console.log('[xpm] DragEnter', dragCounter)
-  dragOverTerminal.value = true
-}
-
-function onDragOver(ev) {
-  ev.preventDefault()
-  if (ev.dataTransfer) {
-    ev.dataTransfer.dropEffect = 'copy'
-  }
-}
-
-function onDragLeave(ev) {
-  ev.preventDefault()
-  dragCounter--
-  console.log('[xpm] DragLeave', dragCounter)
-  if (dragCounter <= 0) {
-    dragCounter = 0
-    dragOverTerminal.value = false
-  }
-}
-
-async function onDrop(ev) {
-  try {
-    ev.preventDefault()
-    console.log('[xpm] Drop event triggered', ev)
-    dragCounter = 0
-    dragOverTerminal.value = false
-    
-    const files = ev.dataTransfer?.files
-    if (!files || !files.length) {
-      console.log('[xpm] No files found in drop')
-      return
-    }
-    if (!nodeGuid.value) {
-      console.log('[xpm] No active node guid for upload')
-      return
-    }
-
-    for (const file of files) {
-      console.log(`[xpm] Processing dropped file: ${file.name}`)
-      try {
-        // Resolve path on server instead of uploading
-        const result = await api(`/api/processes/${encodeURIComponent(nodeGuid.value)}/file-path`, 'POST', {
-          path: file.name
-        })
-        console.log('[xpm] Path resolution response:', result)
-
-        if (result.fullPath) {
-          const quotedPath = result.fullPath.includes(' ') ? `"${result.fullPath}"` : result.fullPath
-          
-          // Copy to clipboard
-          try {
-            await navigator.clipboard.writeText(quotedPath)
-            console.log('[xpm] Path copied to clipboard')
-          } catch (clipErr) {
-            console.error('[xpm] Clipboard copy failed:', clipErr)
-          }
-
-          // Try to push to terminal
-          if (ws && ws.readyState === 1) {
-            console.log('[xpm] Pushing path to terminal via WS')
-            ws.send(JSON.stringify({ type: 'input', data: `${quotedPath} ` }))
-          } else {
-            console.warn('[xpm] Terminal WebSocket not ready')
-            if (term) term.write(`\x1b[33m[xpm] Terminal not active. Path copied to clipboard.\x1b[0m\r\n`)
-          }
-          
-          addNotification(`Reference to "${file.name}" inserted.`, 'success')
-        }
-      } catch (err) {
-        console.error('[xpm] Path resolution error:', err)
-        addNotification(`Failed to resolve path for ${file.name}: ${err.message}`, 'error')
-      }
-    }
-  } catch (globalErr) {
-    console.error('[xpm] Global drop handler error:', globalErr)
-    dragOverTerminal.value = false
-    dragCounter = 0
-  }
-}
-
-function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.readAsText(file)
-  })
-}
-
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result
-      const base64 = result.split(',')[1]
-      resolve(base64)
-    }
-    reader.onerror = () => reject(new Error('Failed to read binary file'))
-    reader.readAsDataURL(file)
-  })
-}
 </script>
+
+<style scoped>
+.xterm-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+}
+.xterm-panel.hidden {
+  transform: translateY(100%);
+}
+.xterm-container {
+  flex: 1;
+  min-height: 0;
+  background: #0f1117;
+}
+.terminal-drop-overlay {
+  position: absolute;
+  top: 40px; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 17, 23, 0.9);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 100; border: 2px dashed var(--blue);
+  margin: 8px; border-radius: 8px; color: var(--blue);
+}
+</style>

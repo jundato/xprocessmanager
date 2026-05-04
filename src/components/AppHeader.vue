@@ -5,7 +5,9 @@
       <StatSummary :counts="counts" :total="total" />
     </div>
     <div class="header-actions">
-
+      <button class="btn-ghost" @click="$emit('open-notifications')" title="Notification History">
+        <i class="fa-solid fa-bell"></i>
+      </button>
       <button class="btn-ghost" @click="$emit('add-node')" title="Add Node">
         <i class="fa-solid fa-plus"></i>
       </button>
@@ -37,5 +39,5 @@ defineProps({
   checkingRemote: { type: Boolean, default: false },
 })
 
-defineEmits(['add-node', 'open-settings', 'check-remote-updates'])
+defineEmits(['add-node', 'open-settings', 'check-remote-updates', 'open-notifications'])
 </script>

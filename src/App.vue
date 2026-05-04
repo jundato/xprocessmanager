@@ -6,9 +6,10 @@
     @add-node="openAddModal"
     @open-settings="settingsStore.openSettings"
     @check-remote-updates="handleCheckAllRemote"
+    @open-notifications="showNotificationHistory = true"
   />
 
-  <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (logStore.logPanelHeight.value + 16) + 'px' : '' }">
+  <div class="floating-toolbar" :style="{ bottom: logStore.selectedNode.value ? (effectivePanelHeight + 16) + 'px' : '' }">
     <div class="toolbar-section">
       <span class="toolbar-label">View</span>
       <button class="toolbar-btn" :class="{ active: viewMode === 'group' }" @click="viewMode = 'group'">Group</button>
@@ -25,7 +26,7 @@
 
   <div
     class="container"
-    :style="{ paddingBottom: logStore.selectedNode.value ? (logStore.logPanelHeight.value + 20) + 'px' : '' }"
+    :style="{ paddingBottom: logStore.selectedNode.value ? (effectivePanelHeight + 20) + 'px' : '' }"
   >
     <NodeGrid
       :sorted-groups="displayGroups"
@@ -38,7 +39,7 @@
       @stop="handleStop"
       @restart="handleRestart"
       @edit="openEditModal"
-      @hover-enter="popoverStore.onCardHoverEnter"
+      @hover-enter="(...args) => popoverStore.onCardHoverEnter(...args)"
       @hover-leave="popoverStore.onCardHoverLeave"
       @hover-cancel="popoverStore.onCardHoverCancel"
       @reorder="handleReorder"
@@ -57,6 +58,7 @@
     ref="logPopoverRef"
     :visible="popoverStore.popoverVisible.value"
     :name="popoverStore.popoverName.value || ''"
+    :node="popoverStore.popoverNode.value"
     :logs="popoverStore.popoverLogs.value"
     :style="popoverStore.popoverStyle.value"
     :pinned="popoverStore.popoverPinned.value"
@@ -64,14 +66,18 @@
     @schedule-hide="popoverStore.schedulePopoverHide"
     @clear="popoverStore.clearPopoverLogs"
     @toggle-pin="popoverStore.togglePin"
+    @branch-click="openBranchModal"
+    @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+    @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
   />
 
   <XTermPanel
     v-if="selectedIsPty"
     :node="selectedNodeObject"
-    :panel-height="logStore.logPanelHeight.value"
+    :panel-height="effectivePanelHeight"
     :terminal-width="settingsStore.sysTerminalWidth.value"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
+    :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
     @start="handleStart"
@@ -79,6 +85,9 @@
     @restart="handleRestart"
     @open-workspace="openWorkspaceModal"
     @edit="openEditModal"
+    @branch-click="openBranchModal"
+    @pull-git="(name, cb) => handlePullGitChanges(name).then(cb)"
+    @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
   />
 
   <LogPanel
@@ -88,8 +97,9 @@
     :selected-node="logStore.selectedNode.value"
     :logs="logStore.logs.value"
     :last-refresh="logStore.lastRefresh.value"
-    :panel-height="logStore.logPanelHeight.value"
+    :panel-height="effectivePanelHeight"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
+    :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
     @clear="logStore.clearLogs"
@@ -100,6 +110,17 @@
     @restart="handleRestart"
     @edit="openEditModal"
   />
+
+  <div
+    v-if="workspaceDocked"
+    class="workspace-dock-divider"
+    :class="{ dragging: workspaceDividerDragging }"
+    :style="{
+      left: logStore.dockedWorkspaceWidth.value + 'px',
+      height: effectivePanelHeight + 'px',
+    }"
+    @mousedown.prevent="startWorkspaceDividerDrag"
+  ></div>
 
   <NodeModal
     :show="showNodeModal"
@@ -131,13 +152,17 @@
     :node-name="workspaceModalStore.nodeName"
     :node-status="workspaceModalStatus"
     :is-agent="workspaceModalIsAgent"
-    :log-panel-height="logStore.logPanelHeight.value"
+    :log-panel-height="effectivePanelHeight"
     :initial-file="workspaceModalStore.initialFile"
     :initial-line="workspaceModalStore.initialLine"
+    :docked="workspaceDocked"
+    :docked-width="logStore.dockedWorkspaceWidth.value"
+    :docked-height="effectivePanelHeight"
     @close="closeWorkspaceModal"
     @start-node="handleStart"
   />
   <AlertModal />
+  <NotificationHistoryModal :show="showNotificationHistory" @close="showNotificationHistory = false" />
   <NotificationContainer />
   <TaskOverlay />
 
@@ -180,6 +205,7 @@ import NodeModal from './components/NodeModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
 import AlertModal from './components/AlertModal.vue'
+import NotificationHistoryModal from './components/NotificationHistoryModal.vue'
 import NotificationContainer from './components/NotificationContainer.vue'
 import TaskOverlay from './components/TaskOverlay.vue'
 const WorkspaceModal = defineAsyncComponent(() => import('./components/WorkspaceModal.vue'))
@@ -201,6 +227,8 @@ const popoverStore = usePopover()
 const settingsStore = useSettings()
 const { showAlert } = useAlert()
 const { addNotification } = useNotifications()
+
+const showNotificationHistory = ref(false)
 
 // ── Computed ────────────────────────────────
 const selectedIsPty = computed(() => {
@@ -610,6 +638,26 @@ function closeWorkspaceModal() {
   workspaceModalStore.initialLine = null
 }
 
+// Workspace docks alongside the footer panel when the same node is open
+// in both, with a draggable vertical divider separating them.
+const workspaceDocked = computed(() =>
+  workspaceModalStore.show &&
+  !!logStore.selectedNode.value &&
+  workspaceModalStore.nodeGuid === logStore.selectedNode.value
+)
+const workspaceDividerDragging = ref(false)
+function startWorkspaceDividerDrag() {
+  workspaceDividerDragging.value = true
+  const onMove = (ev) => logStore.applyDockedWorkspaceWidth(ev.clientX)
+  const onUp = () => {
+    workspaceDividerDragging.value = false
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
 // ── Logs ────────────────────────────────────
 const logPanelRef = ref(null)
 const logPopoverRef = ref(null)
@@ -700,18 +748,30 @@ watch(() => logStore.selectedNode.value, () => {
 })
 
 // ── Window and Global Drag/Drop handlers ───────────────────
+const viewportHeight = ref(window.innerHeight)
 function onResize() {
   popoverStore.onWindowResize()
+  viewportHeight.value = window.innerHeight
 }
 
+// Agent panels max out the footer height; non-agent nodes use the
+// user-resizable logPanelHeight. Drag handle is hidden in the agent case
+// (see XTermPanel/LogPanel) so logPanelHeight is left untouched.
+const effectivePanelHeight = computed(() =>
+  selectedNodeObject.value?.type === 'agent'
+    ? Math.max(120, viewportHeight.value - 70)
+    : logStore.logPanelHeight.value
+)
+
+// Suppress the browser's default file-drop behavior (navigating to the file)
+// when nothing inside the app handled the drop. Bubble phase + no
+// stopPropagation so child drop zones still receive their events.
 function onGlobalDragOver(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
+  if (!ev.defaultPrevented) ev.preventDefault()
 }
 
 function onGlobalDrop(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
+  if (!ev.defaultPrevented) ev.preventDefault()
 }
 
 // ── Lifecycle ───────────────────────────────
@@ -719,14 +779,14 @@ onMounted(async () => {
   await nodeStore.refresh()
   await applyPollIntervals()
   window.addEventListener('resize', onResize)
-  document.addEventListener('dragover', onGlobalDragOver, true)
-  document.addEventListener('drop', onGlobalDrop, true)
+  document.addEventListener('dragover', onGlobalDragOver)
+  document.addEventListener('drop', onGlobalDrop)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
-  document.removeEventListener('dragover', onGlobalDragOver, true)
-  document.removeEventListener('drop', onGlobalDrop, true)
+  document.removeEventListener('dragover', onGlobalDragOver)
+  document.removeEventListener('drop', onGlobalDrop)
   nodeStore.stopPolling()
   logStore.stopLogPolling()
 })
