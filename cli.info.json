@@ -1,0 +1,10 @@
+[
+  {
+    "cli": "gemini",
+    "ls": "gemini --list-sessions"
+  },
+  {
+    "cli": "claude",
+    "ls": "claude --list-sessions"
+  }
+]

@@ -71,13 +71,14 @@
     @push-git="(name, cb) => handlePushGitChanges(name).then(cb)"
   />
 
-  <XTermPanel
+  <NodePanel
     v-if="selectedIsPty"
     :node="selectedNodeObject"
     :panel-height="effectivePanelHeight"
     :terminal-width="settingsStore.sysTerminalWidth.value"
     :workspace-open="workspaceModalStore.nodeGuid === logStore.selectedNode.value"
-    :left-offset="workspaceDocked ? logStore.dockedWorkspaceWidth.value : 0"
+    :left-offset="(workspaceDocked && !workspaceModalIsAgent) ? logStore.dockedWorkspaceWidth.value : 0"
+    :workspace-width="(workspaceDocked && workspaceModalIsAgent) ? logStore.dockedWorkspaceWidth.value : 0"
     @close="handleCloseLog"
     @resize="logStore.applyLogPanelHeight"
     @start="handleStart"
@@ -147,7 +148,25 @@
     @checkout="handleCheckoutBranch"
   />
 
+  <Teleport v-if="workspaceDocked && workspaceModalIsAgent" defer to="#node-panel-workspace">
+    <WorkspaceModal
+      :show="workspaceModalStore.show"
+      :node-name="workspaceModalStore.nodeName"
+      :node-status="workspaceModalStatus"
+      :is-agent="workspaceModalIsAgent"
+      :log-panel-height="effectivePanelHeight"
+      :initial-file="workspaceModalStore.initialFile"
+      :initial-line="workspaceModalStore.initialLine"
+      :docked="true"
+      :docked-width="logStore.dockedWorkspaceWidth.value"
+      :docked-height="effectivePanelHeight"
+      :no-header="true"
+      @close="closeWorkspaceModal"
+      @start-node="handleStart"
+    />
+  </Teleport>
   <WorkspaceModal
+    v-else
     :show="workspaceModalStore.show"
     :node-name="workspaceModalStore.nodeName"
     :node-status="workspaceModalStatus"
@@ -155,9 +174,10 @@
     :log-panel-height="effectivePanelHeight"
     :initial-file="workspaceModalStore.initialFile"
     :initial-line="workspaceModalStore.initialLine"
-    :docked="workspaceDocked"
+    :docked="false"
     :docked-width="logStore.dockedWorkspaceWidth.value"
     :docked-height="effectivePanelHeight"
+    :no-header="false"
     @close="closeWorkspaceModal"
     @start-node="handleStart"
   />
@@ -198,7 +218,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineAsyncComp
 
 import AppHeader from './components/AppHeader.vue'
 import NodeGrid from './components/NodeGrid.vue'
-import XTermPanel from './components/XTermPanel.vue'
+import NodePanel from './components/NodePanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import LogPopover from './components/LogPopover.vue'
 import NodeModal from './components/NodeModal.vue'
@@ -387,13 +407,17 @@ function handleNodeClone(cloneData) {
 // ── Node Actions ───────────────────────────
 async function handleStart(nodeOrGuid) {
   const guid = typeof nodeOrGuid === 'object' ? nodeOrGuid.guid : nodeOrGuid
-  const name = typeof nodeOrGuid === 'object' ? nodeOrGuid.name : (nodeStore.nodes.value.find(n => n.guid === guid)?.name || guid)
+  const node = typeof nodeOrGuid === 'object' ? nodeOrGuid : nodeStore.nodes.value.find(n => n.guid === guid)
+  const name = node?.name || guid
 
   const res = await nodeStore.startNode(guid)
   if (res?.error) {
     addNotification(`Failed to start ${name}: ${res.error}`, 'error')
   } else {
     addNotification(`Started ${name}`)
+    if (node?.usePty && logStore.selectedNode.value !== guid) {
+      handleSelectLog(guid)
+    }
   }
 }
 
@@ -643,7 +667,8 @@ function closeWorkspaceModal() {
 const workspaceDocked = computed(() =>
   workspaceModalStore.show &&
   !!logStore.selectedNode.value &&
-  workspaceModalStore.nodeGuid === logStore.selectedNode.value
+  workspaceModalStore.nodeGuid === logStore.selectedNode.value &&
+  workspaceModalIsAgent.value
 )
 const workspaceDividerDragging = ref(false)
 function startWorkspaceDividerDrag() {
@@ -756,7 +781,7 @@ function onResize() {
 
 // Agent panels max out the footer height; non-agent nodes use the
 // user-resizable logPanelHeight. Drag handle is hidden in the agent case
-// (see XTermPanel/LogPanel) so logPanelHeight is left untouched.
+// (see NodePanel/LogPanel) so logPanelHeight is left untouched.
 const effectivePanelHeight = computed(() =>
   selectedNodeObject.value?.type === 'agent'
     ? Math.max(120, viewportHeight.value - 70)

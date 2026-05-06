@@ -936,6 +936,18 @@ button:active {
   flex-direction: column;
   overflow: hidden;
 }
+
+.workspace-embedded-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
 .workspace-modal.workspace-modal-docked {
   border: none !important;
   border-radius: 0 !important;
@@ -1058,7 +1070,7 @@ button:active {
 }
 
 .workspace-modal-overlay {
-  z-index: 20;
+  z-index: 41;
 }
 
 .modal-overlay.align-top {
@@ -1556,7 +1568,7 @@ button:active {
 }
 
 /* ── XTerm Panel ─────────────────────────── */
-.xterm-panel {
+.node-panel {
   position: fixed;
   bottom: 0;
   left: 0;
@@ -1570,11 +1582,11 @@ button:active {
   z-index: 30;
 }
 
-.xterm-panel.hidden {
+.node-panel.hidden {
   transform: translateY(100%);
 }
 
-.xterm-panel.dragging {
+.node-panel.dragging {
   transition: none;
 }
 
@@ -1593,7 +1605,7 @@ button:active {
 
 
 
-.xterm-panel.drag-over {
+.node-panel.drag-over {
   border: 2px solid var(--blue) !important;
 }
 

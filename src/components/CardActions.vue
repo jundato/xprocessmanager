@@ -4,11 +4,33 @@
     @mouseenter="$emit('hover-cancel', node.guid)"
     @mouseleave="$emit('hover-enter', node.guid, cardRef, expanded, node.command)"
   >
+    <template v-if="node.status === 'starting' && !isSelected">
+      <button class="btn-icon" disabled title="Starting...">
+        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
+      </button>
+    </template>
+    <template v-else-if="node.status === 'stopping' && !isSelected">
+      <button class="btn-icon" disabled title="Stopping...">
+        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
+      </button>
+    </template>
     <template v-if="node.status === 'running' && !isSelected">
-      <button 
-        ref="mainActionBtn" 
-        class="btn-stop btn-icon" 
-        @click.stop="$emit('stop', node.guid)" 
+      <button
+        v-if="node.type === 'agent' && !node.needsInput"
+        ref="mainActionBtn"
+        class="btn-stop btn-icon"
+        @click.stop="$emit('stop', node.guid)"
+        @keydown.enter.stop="$emit('stop', node.guid)"
+        @keydown.space.stop.prevent="$emit('stop', node.guid)"
+        title="Loading..."
+      >
+        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
+      </button>
+      <button
+        v-else
+        ref="mainActionBtn"
+        class="btn-stop btn-icon"
+        @click.stop="$emit('stop', node.guid)"
         @keydown.enter.stop="$emit('stop', node.guid)"
         @keydown.space.stop.prevent="$emit('stop', node.guid)"
         title="Stop"
@@ -28,25 +50,7 @@
       >
         <i class="fa-solid fa-play"></i>
       </button>
-      <div v-if="node.type === 'agent' && isGemini" class="session-dropdown-container">
-        <button class="btn-sessions btn-icon" @click.stop="toggleSessions" title="Resume Session">
-          <i class="fa-solid fa-history"></i>
-        </button>
-        <div v-if="showSessions" class="session-dropdown" @click.stop>
-          <div class="session-dropdown-header">
-            Recent Sessions
-            <button class="btn-close-sessions" @click="showSessions = false">&times;</button>
-          </div>
-          <div v-if="loadingSessions" class="session-loading">Loading...</div>
-          <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
-          <div v-else class="session-list">
-            <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s.id)">
-              <div class="session-title">{{ s.title }}</div>
-              <div class="session-time">{{ s.time }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+
     </template>
     <button v-if="node.cwd && (isSelected ? !terminalOpen : true)" class="btn-icon btn-workspace" :class="{ active: workspaceOpen }" @click.stop="$emit('open-workspace', node)" title="Toggle Workspace">
       <i :class="node.type === 'agent' ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'"></i>
@@ -138,16 +142,6 @@ function focusMain() {
 }
 defineExpose({ mainActionBtn, focusMain })
 
-const isGemini = computed(() => {
-  const cmd = String(props.node.command || '').toLowerCase()
-  const name = String(props.node.name || '').toLowerCase()
-  return cmd.includes('gemini') || name.includes('gemini')
-})
-
-const showSessions = ref(false)
-const loadingSessions = ref(false)
-const sessions = ref([])
-
 const showTools = ref(false)
 const tools = ref([])
 const toolParamConfig = ref(null)
@@ -197,7 +191,6 @@ onUnmounted(() => {
 })
 
 function closeDropdowns() {
-  showSessions.value = false
   showTools.value = false
   // Don't close toolParamConfig on document click to avoid frustration
 }
@@ -248,42 +241,4 @@ async function confirmRunTool() {
   await executeTool(props.node.guid, tool, null, values)
 }
 
-async function toggleSessions() {
-  const current = showSessions.value
-  closeDropdowns()
-  showSessions.value = !current
-  if (showSessions.value) {
-    loadingSessions.value = true
-    try {
-      sessions.value = await api(`/api/processes/${encodeURIComponent(props.node.guid)}/sessions`)
-    } catch (err) {
-      console.error('Failed to fetch sessions:', err)
-      showAlert('Error', 'Failed to fetch sessions.')
-    } finally {
-      loadingSessions.value = false
-    }
-  }
-}
-
-async function resumeSession(sessionId) {
-  try {
-    const result = await api(`/api/processes/${encodeURIComponent(props.node.guid)}/resume/${sessionId}`, 'POST')
-    if (result && result.staleSession) {
-      try {
-        sessions.value = await api(`/api/processes/${encodeURIComponent(props.node.guid)}/sessions`)
-      } catch {}
-      showAlert('Session unavailable', result.error)
-      return
-    }
-    if (result && result.error) {
-      showAlert('Error', `Failed to resume session: ${result.error}`)
-      return
-    }
-    showSessions.value = false
-    emit('start', props.node.guid)
-  } catch (err) {
-    console.error('Failed to resume session:', err)
-    showAlert('Error', `Failed to resume session: ${err.message}`)
-  }
-}
 </script>

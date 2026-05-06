@@ -1,6 +1,6 @@
 <template>
   <div
-    class="xterm-panel"
+    class="node-panel"
     :class="{ hidden: !nodeName, dragging, 'drag-over': dragOverTerminal }"
     :style="{ height: panelHeight + 'px', left: leftOffset + 'px' }"
     @dragenter.prevent="onDragEnter"
@@ -15,6 +15,7 @@
       @touchstart.prevent="startDragTouch"
     ></div>
     <div class="log-header">
+
       <div class="card-header-left">
         <i :class="[typeIcon, 'node-type-icon', node?.status]" :title="node?.type" style="margin-right: 8px;"></i>
         <span>{{ nodeName }}</span>
@@ -45,14 +46,43 @@
         <i class="fa-solid fa-xmark"></i>
       </button>
     </div>
-    <div class="xterm-container">
-      <BaseTerminal 
-        ref="terminalRef"
-        :options="{ cursorBlink: true }"
-        @ready="onTerminalReady"
-        @resize="onTerminalResize"
-        @data="onTerminalData"
-      />
+    <div class="xterm-content-wrapper">
+      <div 
+        id="node-panel-workspace"
+        class="node-panel-workspace"
+        :style="{ 
+          width: (workspaceOpen && node?.type === 'agent') ? workspaceWidth + 'px' : '0px', 
+          flexShrink: 0, 
+          position: 'relative',
+          overflow: 'hidden'
+        }"
+      ></div>
+      <div class="xterm-container" @mousedown="focusTerminal">
+        <BaseTerminal
+          ref="terminalRef"
+          :options="{ cursorBlink: true }"
+          @ready="onTerminalReady"
+          @resize="onTerminalResize"
+          @data="onTerminalData"
+        />
+      </div>
+      
+      <div v-if="node?.type === 'agent'" class="session-side-panel">
+        <div class="session-panel-header">
+          Sessions
+          <button class="btn-ghost btn-icon" @click="fetchSessions" title="Refresh Sessions">
+            <i class="fa-solid fa-rotate"></i>
+          </button>
+        </div>
+        <div v-if="loadingSessions" class="session-loading">Loading...</div>
+        <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
+        <div v-else class="session-list">
+          <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s.id)">
+            <div class="session-title">{{ s.title || s.id }}</div>
+            <div class="session-time">{{ s.time }}</div>
+          </div>
+        </div>
+      </div>
     </div>
     
     <div
@@ -71,8 +101,10 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useAlert } from '../composables/useAlert'
 import { api } from '../composables/useApi'
 import { useNotifications } from '../composables/useNotifications'
+import { useSessions } from '../composables/useSessions'
 import CardActions from './CardActions.vue'
 import GitBranchTag from './GitBranchTag.vue'
 import BaseTerminal from './BaseTerminal.vue'
@@ -82,14 +114,33 @@ const props = defineProps({
   panelHeight: { type: Number, default: 400 },
   workspaceOpen: { type: Boolean, default: false },
   terminalWidth: { type: Number, default: 200 },
+  workspaceWidth: { type: Number, default: 0 },
   leftOffset: { type: Number, default: 0 },
 })
 
+
 const { addNotification } = useNotifications()
+const { showAlert } = useAlert()
 
 const nodeName = computed(() => props.node?.name)
+
 const nodeGuid = computed(() => props.node?.guid)
 const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit', 'branch-click', 'pull-git', 'push-git'])
+
+const {
+  loadingSessions,
+  sessions,
+  fetchSessions,
+  resumeSession
+} = useSessions(computed(() => props.node), emit)
+
+onMounted(() => {
+  if (props.node?.type === 'agent') {
+    fetchSessions()
+  }
+})
+
+
 
 const TYPE_ICONS = {
   service: 'fa-solid fa-server',
@@ -110,6 +161,9 @@ function onTerminalReady() {
   if (nodeGuid.value) {
     connectWs(nodeGuid.value)
   }
+  // Push past the click that opened the panel — that click would otherwise
+  // win focus back to the source button after we focus the terminal here.
+  requestAnimationFrame(() => terminalRef.value?.focus())
 }
 
 function onTerminalResize({ cols, rows }) {
@@ -172,6 +226,7 @@ watch(() => nodeGuid.value, (guid) => {
   if (guid) {
     connectWs(guid)
     terminalRef.value?.clear()
+    requestAnimationFrame(() => terminalRef.value?.focus())
   } else {
     disconnectWs()
   }
@@ -255,26 +310,83 @@ function startDragTouch() {
 </script>
 
 <style scoped>
-.xterm-panel {
+.node-panel {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  background: var(--surface);
+  background: var(--bg);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  z-index: 20;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 30;
+  transition: transform 0.2s;
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
 }
-.xterm-panel.hidden {
+.node-panel.hidden {
   transform: translateY(100%);
+}
+.xterm-content-wrapper {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 .xterm-container {
   flex: 1;
   min-height: 0;
   background: #0f1117;
+}
+.session-side-panel {
+  width: 260px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.session-panel-header {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  font-size: 0.85em;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.session-loading, .session-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.session-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.2s;
+}
+.session-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.session-item:last-child {
+  border-bottom: none;
+}
+.session-title {
+  font-size: 0.9em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-time {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 .terminal-drop-overlay {
   position: absolute;
@@ -285,4 +397,6 @@ function startDragTouch() {
   z-index: 100; border: 2px dashed var(--blue);
   margin: 8px; border-radius: 8px; color: var(--blue);
 }
+
+
 </style>
