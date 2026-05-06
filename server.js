@@ -207,14 +207,44 @@ function disconnectPtyClients(name) {
 const INPUT_PATTERNS = [
   /\?\s*$/m,           // lines ending with "?"
   />\s*$/m,            // interactive caret prompts
+  /:\s*$/m,            // colons (password/input prompts)
+  /[$#]\s*$/m,         // shell prompts ($ or #)
   /press enter/i,
   /\([yY]\/[nN]\)/,
   /do you want to/i,
 ];
 
+function stripAnsi(text) {
+  if (typeof text !== 'string') return '';
+  return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-4]?[ORZcf-nqry=><]/g, '');
+}
+
+// Sticky ready detection: once an interactive signal is seen we keep
+// needsInput=true until the process restarts. This avoids false "busy" flips
+// when a TUI redraws and momentarily emits ?2004l/?25l during its render.
+// Signals (any one is sufficient):
+//   ?2004h  bracketed paste enabled — set by Claude/Cursor/most readline CLIs
+//   ?1049h  alt-screen entered — set by Ink-based TUIs (Gemini, etc.)
+const RAW_READY_PATTERNS = [
+  /\x1b\[\?2004h/,
+  /\x1b\[\?1049h/,
+];
+
 function checkNeedsInput(entry, text) {
-  if (!entry) return;
-  if (INPUT_PATTERNS.some(p => p.test(text))) {
+  if (!entry || entry.needsInput) return;
+
+  if (typeof text === 'string' && RAW_READY_PATTERNS.some(p => p.test(text))) {
+    entry.needsInput = true;
+    return;
+  }
+
+  // Fallback for shell-style CLIs that don't use bracketed paste / alt screen
+  const lastLogs = entry.logs.slice(-5).map(l => l.text).join('');
+  const cleanText = stripAnsi(lastLogs);
+
+  const isPromptLike = cleanText.length > 0 && !cleanText.endsWith('\n') && !cleanText.endsWith('\r');
+
+  if (isPromptLike || INPUT_PATTERNS.some(p => p.test(cleanText))) {
     entry.needsInput = true;
   }
 }
@@ -622,6 +652,52 @@ app.get('/api/processes/:id/sessions', (req, res) => {
   listGeminiSessions(resolveTemplate(config.cwd))
     .then((sessions) => res.json(sessions))
     .catch((err) => res.status(500).json(err));
+});
+
+function listProviderSessions(cwd, cmd) {
+  return new Promise((resolve, reject) => {
+    // If the command appears to be a gemini call, reuse the gemini parser.
+    if (cmd.includes('gemini')) {
+      const parts = cmd.split(' ');
+      const execCmd = parts[0];
+      const args = parts.slice(1);
+      const execOpts = { env: getProcessEnv() };
+      if (cwd && fs.existsSync(cwd)) execOpts.cwd = cwd;
+      exec(`${execCmd} ${args.join(' ')}`, execOpts, (error, stdout, stderr) => {
+        if (error && !stdout) return reject({ error: error.message, stderr });
+        const sessions = [];
+        const regex = /^\s*(\d+)\.\s+(.+?)\s+\((.+?)\)\s+\[(.+?)\]/;
+        for (const line of stdout.split('\n')) {
+          const m = line.match(regex);
+          if (m) sessions.push({ index: parseInt(m[1]), title: m[2], time: m[3], id: m[4] });
+        }
+        resolve(sessions);
+      });
+      return;
+    }
+    // Fallback: run the command directly and return raw lines.
+    const execOpts = { env: getProcessEnv() };
+    if (cwd && fs.existsSync(cwd)) execOpts.cwd = cwd;
+    exec(cmd, execOpts, (error, stdout, stderr) => {
+      if (error && !stdout) return reject({ error: error.message, stderr });
+      const lines = stdout.split('\n').filter(l => l.trim());
+      resolve(lines.map(l => ({ raw: l })));
+    });
+  });
+}
+
+// Endpoint for provider-specific session listing.
+app.get('/api/processes/:id/provider-sessions', async (req, res) => {
+  const config = processConfigs.find(c => c.guid === req.params.id || c.name === req.params.id);
+  if (!config) return res.status(404).json({ error: `Unknown process identifier: ${req.params.id}` });
+  const cmd = req.query.cmd;
+  if (!cmd) return res.status(400).json({ error: 'Missing cmd query parameter' });
+  try {
+    const sessions = await listProviderSessions(resolveTemplate(config.cwd), cmd);
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json(err);
+  }
 });
 
 app.post('/api/processes/:id/start', (req, res) => {

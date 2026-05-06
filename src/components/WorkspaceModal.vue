@@ -1,15 +1,15 @@
 <template>
   <div
     v-if="show"
-    :class="docked ? 'workspace-docked-wrapper' : ['modal-overlay', 'workspace-modal-overlay', { 'align-top': isAgent }]"
-    :style="docked ? { width: dockedWidth + 'px', height: dockedHeight + 'px' } : null"
+    :class="(docked && !noHeader) ? 'workspace-docked-wrapper' : (docked && noHeader) ? 'workspace-embedded-wrapper' : ['modal-overlay', 'workspace-modal-overlay', { 'align-top': isAgent }]"
+    :style="(docked && !noHeader) ? { width: dockedWidth + 'px', height: dockedHeight + 'px' } : (docked && noHeader) ? { width: '100%', height: '100%' } : null"
     @mousedown.self="!docked && (overlayMouseDown = true)"
     @click.self="!docked && handleOverlayClick()"
   >
     <div class="modal workspace-modal"
-         :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-agent': isAgent, 'workspace-modal-docked': docked }"
-         :style="docked ? { width: '100%', height: '100%', maxWidth: 'none', borderRadius: 0 } : (isAgent ? { height: `calc(100vh - 84px - ${logPanelHeight}px)` } : {})">
-      <div class="workspace-header">
+         :class="{ 'workspace-modal-editor': tabs.length > 0, 'workspace-modal-agent': isAgent && !docked, 'workspace-modal-docked': docked }"
+         :style="docked ? { width: '100%', height: '100%', maxWidth: 'none', borderRadius: 0, border: '1px solid #3b82f6' } : (isAgent ? { height: `calc(100vh - 70px - ${logPanelHeight}px)` } : {})">
+      <div v-if="!noHeader" class="workspace-header">
         <h2>
           <i :class="isAgent ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'" style="margin-right: 8px; color: var(--yellow)"></i>
           {{ nodeName }}
@@ -215,7 +215,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onUnmounted, shallowRef, markRaw, defineAsyncComponent } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onUnmounted, shallowRef, markRaw, defineAsyncComponent } from 'vue'
 import { api } from '../composables/useApi.js'
 
 const MermaidEditor = defineAsyncComponent(() => import('./MermaidEditor.vue'))
@@ -231,6 +231,7 @@ const props = defineProps({
   docked: { type: Boolean, default: false },
   dockedWidth: { type: Number, default: 480 },
   dockedHeight: { type: Number, default: 300 },
+  noHeader: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['close', 'start-node'])
@@ -810,8 +811,8 @@ function formatSize(bytes) {
 }
 
 // ── Lifecycle ───────────────────────────────
-watch(() => props.show, (val) => {
-  if (val && props.nodeName) {
+const initWorkspace = () => {
+  if (props.show && props.nodeName) {
     currentPath.value = ''
     tabs.value = []
     activeTabId.value = null
@@ -822,14 +823,29 @@ watch(() => props.show, (val) => {
     if (props.initialFile) {
       openFileView(props.initialFile, props.initialLine)
     }
-  } else if (!val) {
-    disposeEditor()
+  }
+}
 
+onMounted(() => {
+  initWorkspace()
+})
+
+watch(() => props.show, (val) => {
+  if (val) {
+    initWorkspace()
+  } else {
+    disposeEditor()
     tabs.value = []
     activeTabId.value = null
     selectedFiles.value = []
     markdownEditMode.value = false
     renderedMarkdown.value = ''
+  }
+})
+
+watch(() => props.nodeName, () => {
+  if (props.show) {
+    initWorkspace()
   }
 })
 

@@ -103,6 +103,7 @@ export function useNodes() {
         branch: p.branch,
         type: p.type,
         tools: p.tools,
+        needsInput: p.needsInput,
       })),
       groups: defs,
     })
