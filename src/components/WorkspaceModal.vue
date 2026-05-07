@@ -203,14 +203,14 @@
     </div>
     
     <!-- Mermaid Editor UI -->
-    <MermaidEditor
-      v-if="mermaidEditorOpen"
-      :initialCode="mermaidEditorCode"
-      :is-agent="isAgent"
-      :log-panel-height="logPanelHeight"
-      @save="onMermaidSave"
-      @cancel="closeMermaidEditor"
-    />
+    <Teleport to="body">
+      <MermaidEditor
+        v-if="mermaidEditorOpen"
+        :initialCode="mermaidEditorCode"
+        @save="onMermaidSave"
+        @cancel="closeMermaidEditor"
+      />
+    </Teleport>
   </div>
 </template>
 

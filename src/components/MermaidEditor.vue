@@ -1,6 +1,6 @@
 <template>
-  <div class="modal-overlay" :class="{ 'align-top': isAgent, 'workspace-modal-overlay': isAgent }" :style="isAgent ? {} : { zIndex: 1000, background: 'rgba(0,0,0,0.8)' }" @mousedown.self="closeMermaidEditor">
-    <div class="modal mermaid-editor-modal" :class="{ 'workspace-modal-agent': isAgent }" :style="isAgent ? { width: 'calc(100vw - 48px)', maxWidth: 'none', height: `calc(100vh - 84px - ${logPanelHeight}px)`, display: 'flex', flexDirection: 'column', background: 'var(--bg)', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' } : { width: '90%', height: '85%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }">
+  <div class="modal-overlay mermaid-editor-overlay" @mousedown.self="closeMermaidEditor">
+    <div class="modal mermaid-editor-modal">
       <div class="workspace-header" style="border-bottom: 1px solid var(--border); padding: 12px 16px; display: flex; align-items: center;">
         <h2 style="margin: 0; font-size: 14px;"><i class="fa-solid fa-diagram-project" style="margin-right: 8px; color: var(--magenta)"></i>Flow Editor</h2>
         <div style="display: flex; gap: 8px; margin-left: auto">
@@ -122,9 +122,7 @@
 import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
 
 const props = defineProps({
-  initialCode: { type: String, default: '' },
-  isAgent: { type: Boolean, default: false },
-  logPanelHeight: { type: Number, default: 300 }
+  initialCode: { type: String, default: '' }
 })
 
 const emit = defineEmits(['save', 'cancel'])
@@ -566,3 +564,24 @@ watch(() => props.initialCode, (newVal) => {
   updateMermaidLivePreview(true)
 }, { immediate: true })
 </script>
+
+<style scoped>
+.mermaid-editor-overlay {
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.mermaid-editor-modal {
+  width: 90vw;
+  height: 85vh;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  padding: 0;
+}
+</style>
