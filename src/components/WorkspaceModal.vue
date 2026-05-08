@@ -227,6 +227,7 @@ import MermaidEditor from './MermaidEditor.vue'
 const props = defineProps({
   show: { type: Boolean, default: false },
   nodeName: { type: String, default: null },
+  nodeGuid: { type: String, default: null },
   nodeStatus: { type: String, default: null },
   isAgent: { type: Boolean, default: false },
   logPanelHeight: { type: Number, default: 0 },
@@ -304,9 +305,9 @@ function onSearchInput() {
 
 async function runSearch() {
   const q = searchQuery.value.trim()
-  if (!q || !props.nodeName) return
+  if (!q || !props.nodeGuid) return
   searchLoading.value = true
-  const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/search?q=${encodeURIComponent(q)}`)
+  const res = await api(`/api/processes/${encodeURIComponent(props.nodeGuid)}/search?q=${encodeURIComponent(q)}`)
   searchLoading.value = false
   if (res.error) return
   searchResults.value = res.results || []
@@ -383,12 +384,12 @@ function toggleFileSelection(path) {
 }
 
 async function fetchFiles(subPath) {
-  if (!props.nodeName) return
+  if (!props.nodeGuid) return
   listLoading.value = true
   listError.value = null
   files.value = []
   const query = subPath ? `?path=${encodeURIComponent(subPath)}` : ''
-  const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/files${query}`)
+  const res = await api(`/api/processes/${encodeURIComponent(props.nodeGuid)}/files${query}`)
   listLoading.value = false
   if (res.error) { listError.value = res.error; return }
   files.value = res.files || []
@@ -645,7 +646,7 @@ async function openFileView(filePath, goToLine) {
 
   if (isImageFile(filePath)) {
     fileError.value = null
-    const src = `/api/processes/${encodeURIComponent(props.nodeName)}/file-raw?path=${encodeURIComponent(filePath)}`
+    const src = `/api/processes/${encodeURIComponent(props.nodeGuid)}/file-raw?path=${encodeURIComponent(filePath)}`
     addTab({
       id: `file-${filePath}`,
       type: 'image',
@@ -662,7 +663,7 @@ async function openFileView(filePath, goToLine) {
   markdownEditMode.value = false
   renderedMarkdown.value = ''
 
-  const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file?path=${encodeURIComponent(filePath)}`)
+  const res = await api(`/api/processes/${encodeURIComponent(props.nodeGuid)}/file?path=${encodeURIComponent(filePath)}`)
   fileLoading.value = false
   if (res.error) { fileError.value = res.error; return }
 
@@ -768,7 +769,7 @@ function disposeEditor() {
 async function saveFile() {
   if (!editorInstance || activeTab.value?.type !== 'file') return
   saving.value = true
-  const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file`, 'PUT', {
+  const res = await api(`/api/processes/${encodeURIComponent(props.nodeGuid)}/file`, 'PUT', {
     path: activeTab.value.path,
     content: editorInstance.getValue(),
   })
@@ -787,7 +788,7 @@ async function refreshActiveFile() {
   fileLoading.value = true
   fileError.value = null
   try {
-    const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file?path=${encodeURIComponent(filePath)}`)
+    const res = await api(`/api/processes/${encodeURIComponent(props.nodeGuid)}/file?path=${encodeURIComponent(filePath)}`)
     if (res.error) {
       fileError.value = res.error
       return
@@ -863,7 +864,7 @@ function formatSize(bytes) {
 
 // ── Lifecycle ───────────────────────────────
 const initWorkspace = () => {
-  if (props.show && props.nodeName) {
+  if (props.show && props.nodeGuid) {
     currentPath.value = ''
     tabs.value = []
     activeTabId.value = null
@@ -894,7 +895,7 @@ watch(() => props.show, (val) => {
   }
 })
 
-watch(() => props.nodeName, () => {
+watch(() => props.nodeGuid, () => {
   if (props.show) {
     initWorkspace()
   }

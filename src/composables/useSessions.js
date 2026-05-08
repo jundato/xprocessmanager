@@ -3,7 +3,7 @@ import { api } from './useApi'
 import { useAlert } from './useAlert'
 import cliInfo from '../../cli.info.json'
 
-export function useSessions(node, emit) {
+export function useSessions(node, emit, spawnChat) {
   const { showAlert } = useAlert()
   const showSessions = ref(false)
   const loadingSessions = ref(false)
@@ -36,26 +36,20 @@ export function useSessions(node, emit) {
     }
   }
 
-  async function resumeSession(sessionId) {
+  async function resumeSession(session) {
+    if (!spawnChat) {
+      showAlert('Error', 'Chat spawning is unavailable.')
+      return
+    }
     try {
-      const url = `/api/processes/${encodeURIComponent(node.value.guid)}/resume/${sessionId}`
-      const result = await api(url, 'POST')
-      if (result && result.staleSession) {
-        try {
-          const sessionsUrl = `/api/processes/${encodeURIComponent(node.value.guid)}/provider-sessions?cmd=${encodeURIComponent(sessionCommand.value)}`
-          sessions.value = await api(sessionsUrl)
-        } catch {}
-        showAlert('Session unavailable', result.error)
-        return
-      }
-      if (result && result.error) {
-        showAlert('Error', `Failed to resume session: ${result.error}`)
-        return
-      }
+      await spawnChat({
+        instruction: 'continue',
+        resumeId: session.id,
+        title: session.title || null,
+      })
       showSessions.value = false
-      if (emit) emit('start', node.value.guid)
     } catch (err) {
-      console.error('Failed to resume session:', err)
+      console.error('Failed to resume session as chat:', err)
       showAlert('Error', `Failed to resume session: ${err.message}`)
     }
   }

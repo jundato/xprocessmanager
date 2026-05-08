@@ -36,11 +36,13 @@
         :workspace-open="workspaceOpen"
         :terminal-open="true"
         :show-edit="true"
+        :in-panel="true"
         @start="$emit('start', $event)"
         @stop="$emit('stop', $event)"
         @restart="$emit('restart', $event)"
         @open-workspace="$emit('open-workspace', $event)"
         @edit="$emit('edit', $event)"
+        @chat="onOpenChatModal"
       />
       <button class="btn-ghost btn-icon" @click="$emit('close')" title="Close Terminal">
         <i class="fa-solid fa-xmark"></i>
@@ -58,7 +60,24 @@
         }"
       ></div>
       <div class="xterm-container" @mousedown="focusTerminal">
+        <template v-if="node?.type === 'agent'">
+          <div v-if="loadingChats" class="chat-empty">Loading chats…</div>
+          <div v-else-if="chats.length === 0" class="chat-empty">
+            <i class="fa-solid fa-comment-dots chat-empty-icon"></i>
+            <p>No chats yet. Click <i class="fa-solid fa-comment-dots"></i> in the header to start one.</p>
+          </div>
+          <div v-else class="chat-stack">
+            <ChatItem
+              v-for="c in chats"
+              :key="c.chatId"
+              :ref="(el) => registerChatRef(c.chatId, el)"
+              :chat="c"
+              @close="onCloseChat"
+            />
+          </div>
+        </template>
         <BaseTerminal
+          v-else
           ref="terminalRef"
           :options="{ cursorBlink: true }"
           @ready="onTerminalReady"
@@ -66,7 +85,7 @@
           @data="onTerminalData"
         />
       </div>
-      
+
       <div v-if="node?.type === 'agent'" class="session-side-panel">
         <div class="session-panel-header">
           Sessions
@@ -77,7 +96,7 @@
         <div v-if="loadingSessions" class="session-loading">Loading...</div>
         <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
         <div v-else class="session-list">
-          <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s.id)">
+          <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s)">
             <div class="session-title">{{ s.title || s.id }}</div>
             <div class="session-time">{{ s.time }}</div>
           </div>
@@ -96,6 +115,12 @@
       <i class="fa-solid fa-file-import"></i>
       <p>Drop files here to reference in {{ nodeName }}</p>
     </div>
+    <ChatModal
+      :show="chatModalOpen"
+      :submitting="chatSubmitting"
+      @ok="onChatOk"
+      @cancel="chatModalOpen = false"
+    />
   </div>
 </template>
 
@@ -105,9 +130,12 @@ import { useAlert } from '../composables/useAlert'
 import { api } from '../composables/useApi'
 import { useNotifications } from '../composables/useNotifications'
 import { useSessions } from '../composables/useSessions'
+import { useChats } from '../composables/useChats'
 import CardActions from './CardActions.vue'
 import GitBranchTag from './GitBranchTag.vue'
 import BaseTerminal from './BaseTerminal.vue'
+import ChatItem from './ChatItem.vue'
+import ChatModal from './ChatModal.vue'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -128,15 +156,68 @@ const nodeGuid = computed(() => props.node?.guid)
 const emit = defineEmits(['close', 'resize', 'start', 'stop', 'restart', 'open-workspace', 'edit', 'branch-click', 'pull-git', 'push-git'])
 
 const {
+  chats,
+  loading: loadingChats,
+  fetchChats,
+  spawnChat,
+  killChat,
+  startPolling: startChatsPolling,
+  stopPolling: stopChatsPolling
+} = useChats(nodeGuid)
+
+const {
   loadingSessions,
   sessions,
   fetchSessions,
   resumeSession
-} = useSessions(computed(() => props.node), emit)
+} = useSessions(computed(() => props.node), emit, spawnChat)
+
+const chatModalOpen = ref(false)
+const chatSubmitting = ref(false)
+const chatRefs = new Map()
+
+function registerChatRef(chatId, el) {
+  if (el) chatRefs.set(chatId, el)
+  else chatRefs.delete(chatId)
+}
+
+function onOpenChatModal() {
+  chatModalOpen.value = true
+}
+
+async function onChatOk(instruction) {
+  chatSubmitting.value = true
+  try {
+    await spawnChat(instruction)
+    chatModalOpen.value = false
+  } catch (err) {
+    showAlert('Error', `Failed to start chat: ${err.message}`)
+  } finally {
+    chatSubmitting.value = false
+  }
+}
+
+async function onCloseChat(chatId) {
+  const ref = chatRefs.get(chatId)
+  ref?.markKilled?.()
+  await killChat(chatId)
+}
+
+watch(nodeGuid, (guid) => {
+  if (guid && props.node?.type === 'agent') {
+    fetchChats()
+    startChatsPolling()
+  } else {
+    chats.value = []
+    stopChatsPolling()
+  }
+}, { immediate: false })
 
 onMounted(() => {
   if (props.node?.type === 'agent') {
     fetchSessions()
+    fetchChats()
+    startChatsPolling()
   }
 })
 
@@ -195,6 +276,9 @@ function connectWs(id) {
 
   ws.onopen = () => {
     console.log(`[xpm] Connected to ${id}`)
+    // Reset terminal before the server replays its buffer, so reconnects
+    // don't stack a duplicate copy of the history on top of existing content.
+    terminalRef.value?.write('\x1bc')
     terminalRef.value?.fit()
   }
 
@@ -223,7 +307,7 @@ function disconnectWs() {
 }
 
 watch(() => nodeGuid.value, (guid) => {
-  if (guid) {
+  if (guid && props.node?.type !== 'agent') {
     connectWs(guid)
     terminalRef.value?.clear()
     requestAnimationFrame(() => terminalRef.value?.focus())
@@ -238,6 +322,7 @@ watch(() => props.panelHeight, () => {
 
 onUnmounted(() => {
   disconnectWs()
+  stopChatsPolling()
 })
 
 // File Drag & Drop: insert dropped files' absolute paths into the terminal.
@@ -396,6 +481,33 @@ function startDragTouch() {
   align-items: center; justify-content: center;
   z-index: 100; border: 2px dashed var(--blue);
   margin: 8px; border-radius: 8px; color: var(--blue);
+}
+.chat-stack {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+}
+.chat-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+.chat-empty-icon {
+  font-size: 32px;
+  opacity: 0.4;
 }
 
 

@@ -35,6 +35,10 @@ if (!process.env.PATH.split(':').includes(localBinDir)) {
 const systemConfigPath = path.join(__dirname, 'system.config.json');
 const systemConfig = fs.existsSync(systemConfigPath) ? JSON.parse(fs.readFileSync(systemConfigPath, 'utf-8')) : {};
 
+const cliInfoPath = path.join(__dirname, 'cli.info.json');
+const cliInfo = fs.existsSync(cliInfoPath) ? JSON.parse(fs.readFileSync(cliInfoPath, 'utf-8')) : [];
+const allowedSessionCmds = new Set(cliInfo.map((c) => c && c.ls).filter(Boolean));
+
 const app = express();
 const PORT = parseInt(process.env.PORT) || systemConfig.port || 1337;
 const MAX_LOG_LINES = systemConfig.maxLogLines || 500;
@@ -275,9 +279,7 @@ function getGitBranch(cwd) {
 }
 
 function getState(id) {
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
-  const guid = config?.guid || id;
-  const entry = processes.get(guid);
+  const entry = processes.get(id);
   if (!entry) return { status: 'stopped', pid: null, logs: [], startedAt: null };
   return {
     status: entry.status,
@@ -352,9 +354,15 @@ function triggerOnSuccess(entry, config) {
   const targets = Array.isArray(config.onSuccess) ? config.onSuccess : [config.onSuccess];
   for (const target of targets) {
     if (!target) continue;
+    // onSuccess in user configs is written by name; resolve to guid here.
+    const targetConfig = processConfigs.find((c) => c.guid === target || c.name === target);
+    if (!targetConfig) {
+      appendLog(entry, 'system', `onSuccess: unknown target "${target}"`);
+      continue;
+    }
     appendLog(entry, 'system', `onSuccess: triggering "${target}"`);
     setImmediate(() => {
-      const result = startProcess(target);
+      const result = startProcess(targetConfig.guid);
       if (result && result.error) appendLog(entry, 'system', `onSuccess "${target}" failed: ${result.error}`);
     });
   }
@@ -379,7 +387,7 @@ function getProcessEnv() {
 }
 
 function startProcess(id, resumeId = null) {
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config) return { error: `Unknown process identifier: ${id}` };
   const name = config.name;
   const guid = config.guid;
@@ -393,10 +401,10 @@ function startProcess(id, resumeId = null) {
   let resolvedArgs = (config.args || []).map(resolveTemplate);
 
   if (resumeId) {
-    // Check if the command is gemini or node + gemini
-    const isGemini = config.command.includes('gemini') || (resolvedArgs[0] && resolvedArgs[0].includes('gemini'));
-    if (isGemini) {
-      // Find existing -r or --resume and replace, or append
+    // Both gemini and claude accept `--resume <id>` (or `-r <id>`).
+    const cmdLine = `${config.command} ${resolvedArgs.join(' ')}`;
+    const supportsResume = cmdLine.includes('gemini') || cmdLine.includes('claude');
+    if (supportsResume) {
       const idx = resolvedArgs.findIndex(a => a === '-r' || a === '--resume');
       if (idx !== -1) {
         resolvedArgs[idx + 1] = resumeId;
@@ -515,8 +523,145 @@ function startProcess(id, resumeId = null) {
   return { ok: true };
 }
 
+function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
+  const config = processConfigs.find((c) => c.guid === parentGuid);
+  if (!config) return { error: `Unknown process identifier: ${parentGuid}` };
+  if ((config.type || 'service') !== 'agent') {
+    return { error: `Process ${parentGuid} is not of type 'agent'` };
+  }
+  if (!pty || !config.usePty) {
+    return { error: `Chat requires a PTY-enabled agent` };
+  }
+  if (typeof instruction !== 'string' || !instruction.trim()) {
+    return { error: 'Instruction is required' };
+  }
+
+  const chatId = `${parentGuid}::chat::${generateGuid()}`;
+  const resolvedCwd = resolveTemplate(config.cwd);
+  const baseArgs = (config.args || []).map(resolveTemplate);
+
+  if (resumeId) {
+    const cmdLine = `${config.command} ${baseArgs.join(' ')}`;
+    const supportsResume = cmdLine.includes('gemini') || cmdLine.includes('claude');
+    if (supportsResume) {
+      const idx = baseArgs.findIndex((a) => a === '-r' || a === '--resume');
+      if (idx !== -1) baseArgs[idx + 1] = resumeId;
+      else baseArgs.push('--resume', resumeId);
+    }
+  }
+
+  const resolvedArgs = [...baseArgs, instruction];
+  const env = getProcessEnv();
+
+  const entry = {
+    status: 'running',
+    logs: [{ ts: Date.now(), source: 'system', text: `Spawning chat: ${config.command} ${resolvedArgs.join(' ')}` }],
+    ptyRawBuffer: '',
+    logRawBuffer: '',
+    startedAt: Date.now(),
+    config,
+    parentGuid,
+    instruction,
+    resumeId: resumeId || null,
+    title: title || null,
+  };
+
+  let proc;
+  try {
+    console.log(`[xpm] Spawning chat (pty): ${config.command} ${JSON.stringify(resolvedArgs)} cwd=${resolvedCwd || '(none)'}`);
+    proc = pty.spawn('/usr/bin/env', [config.command, ...resolvedArgs], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 40,
+      cwd: resolvedCwd || process.cwd(),
+      env,
+    });
+
+    entry.ptyProc = proc;
+
+    proc.onData((data) => {
+      appendLog(entry, 'stdout', data);
+      broadcastPtyData(chatId, data);
+      checkNeedsInput(entry, data.toString());
+      entry.ptyRawBuffer += data;
+      if (entry.ptyRawBuffer.length > 256 * 1024) {
+        entry.ptyRawBuffer = entry.ptyRawBuffer.slice(-128 * 1024);
+      }
+    });
+
+    proc.onExit(({ exitCode }) => {
+      const wasStopping = entry.status === 'stopping';
+      entry.status = wasStopping ? 'stopped' : (exitCode === 0 ? 'stopped' : 'errored');
+      appendLog(entry, 'system', `Exited with code ${exitCode}`);
+      entry.proc = null;
+      entry.ptyProc = null;
+      disconnectPtyClients(chatId);
+    });
+  } catch (err) {
+    entry.status = 'errored';
+    appendLog(entry, 'system', `Failed to start chat: ${err.message}`);
+    processes.set(chatId, entry);
+    return { error: err.message };
+  }
+
+  entry.proc = {
+    stdin: { write: (data) => proc.write(data), destroyed: false },
+    pid: proc.pid,
+    kill: (signal) => proc.kill(signal),
+  };
+
+  processes.set(chatId, entry);
+  return {
+    ok: true,
+    chatId,
+    instruction,
+    title: entry.title,
+    resumeId: entry.resumeId,
+    startedAt: entry.startedAt,
+    status: entry.status,
+  };
+}
+
+function killChat(chatId) {
+  const entry = processes.get(chatId);
+  if (!entry || !entry.parentGuid) {
+    return { error: `Chat "${chatId}" not found` };
+  }
+  if (entry.status === 'running' && entry.proc) {
+    entry.status = 'stopping';
+    try {
+      kill(entry.proc.pid, 'SIGTERM', (err) => {
+        if (err) appendLog(entry, 'system', `Kill error: ${err.message}`);
+      });
+    } catch (err) {
+      appendLog(entry, 'system', `Kill error: ${err.message}`);
+    }
+  }
+  processes.delete(chatId);
+  disconnectPtyClients(chatId);
+  return { ok: true };
+}
+
+function listChats(parentGuid) {
+  const result = [];
+  for (const [id, entry] of processes.entries()) {
+    if (entry.parentGuid !== parentGuid) continue;
+    result.push({
+      chatId: id,
+      instruction: entry.instruction,
+      title: entry.title || null,
+      resumeId: entry.resumeId || null,
+      startedAt: entry.startedAt,
+      status: entry.status,
+      needsInput: entry.needsInput || false,
+    });
+  }
+  result.sort((a, b) => a.startedAt - b.startedAt);
+  return result;
+}
+
 function stopProcess(id) {
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   const guid = config?.guid || id;
   const entry = processes.get(guid);
   if (!entry || entry.status !== 'running' || !entry.proc) {
@@ -553,7 +698,7 @@ const publicDir = path.join(__dirname, 'public');
 app.use(express.json({ limit: '50mb' }));
 app.get('/api/processes', (_req, res) => {
   const result = processConfigs.map((config) => {
-    const state = getState(config.name);
+    const state = getState(config.guid);
     const resolvedCwd = resolveTemplate(config.cwd);
     return {
       guid: config.guid,
@@ -597,7 +742,7 @@ app.use(express.text({ limit: '50mb' }));
 
 app.post('/api/processes/:id/stdin', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   const guid = config?.guid || id;
   const entry = processes.get(guid);
   if (!entry || entry.status !== 'running' || !entry.proc) {
@@ -616,6 +761,17 @@ app.post('/api/processes/:id/stdin', (req, res) => {
   res.json({ ok: true });
 });
 
+function sortSessions(sessions) {
+  // Sort newest-first. Prefer Date.parse on the time string; fall back to index
+  // (gemini's --list-sessions emits oldest-first, so highest index = newest).
+  return sessions.slice().sort((a, b) => {
+    const at = Date.parse(a.time);
+    const bt = Date.parse(b.time);
+    if (!isNaN(at) && !isNaN(bt) && at !== bt) return bt - at;
+    return b.index - a.index;
+  });
+}
+
 function listGeminiSessions(cwd) {
   return new Promise((resolve, reject) => {
     const gemini = getGeminiPath();
@@ -629,7 +785,7 @@ function listGeminiSessions(cwd) {
         const m = line.match(regex);
         if (m) sessions.push({ index: parseInt(m[1]), title: m[2], time: m[3], id: m[4] });
       }
-      return sessions;
+      return sortSessions(sessions);
     };
 
     const cmd = gemini.startsWith('/') ? `node "${gemini}"` : gemini;
@@ -647,15 +803,94 @@ app.get('/api/gemini/sessions', (req, res) => {
 });
 
 app.get('/api/processes/:id/sessions', (req, res) => {
-  const config = processConfigs.find((c) => c.guid === req.params.id || c.name === req.params.id);
+  const config = processConfigs.find((c) => c.guid === req.params.id);
   if (!config) return res.status(404).json({ error: `Unknown process identifier: ${req.params.id}` });
   listGeminiSessions(resolveTemplate(config.cwd))
     .then((sessions) => res.json(sessions))
     .catch((err) => res.status(500).json(err));
 });
 
+function extractClaudeSessionTitle(filePath) {
+  // Claude Code transcripts are JSONL. The session title (when claude has
+  // synthesized one) appears as a {type:"ai-title", aiTitle:"..."} record;
+  // the earliest user message is the fallback. Both land in the first chunk
+  // of the file, so we read a bounded prefix for speed.
+  try {
+    const stat = fs.statSync(filePath);
+    const max = Math.min(stat.size, 64 * 1024);
+    if (max <= 0) return null;
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(max);
+    fs.readSync(fd, buf, 0, max, 0);
+    fs.closeSync(fd);
+    const text = buf.toString('utf8');
+    let firstUser = null;
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      if (obj.type === 'ai-title' && obj.aiTitle) return String(obj.aiTitle).slice(0, 200);
+      if (!firstUser && obj.type === 'user' && obj.message?.role === 'user') {
+        const content = obj.message.content;
+        if (typeof content === 'string') firstUser = content;
+        else if (Array.isArray(content)) {
+          const textPart = content.find((c) => c && (typeof c === 'string' || c.type === 'text'));
+          if (textPart) firstUser = typeof textPart === 'string' ? textPart : textPart.text;
+        }
+      }
+    }
+    return firstUser ? String(firstUser).replace(/\s+/g, ' ').trim().slice(0, 200) : null;
+  } catch {
+    return null;
+  }
+}
+
+function listClaudeSessions(cwd) {
+  return new Promise((resolve) => {
+    if (!cwd) return resolve([]);
+    const home = process.env.HOME || os.homedir();
+    const encoded = cwd.replace(/[^A-Za-z0-9_-]/g, '-');
+    const dir = path.join(home, '.claude', 'projects', encoded);
+    if (!fs.existsSync(dir)) return resolve([]);
+
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { return resolve([]); }
+
+    const sessions = [];
+    let index = 1;
+    for (const file of entries) {
+      if (!file.endsWith('.jsonl')) continue;
+      const filePath = path.join(dir, file);
+      let stat;
+      try { stat = fs.statSync(filePath); } catch { continue; }
+      const sessionId = file.slice(0, -'.jsonl'.length);
+      const title = extractClaudeSessionTitle(filePath) || sessionId;
+      sessions.push({
+        index: index++,
+        title,
+        time: stat.mtime.toISOString(),
+        id: sessionId,
+      });
+    }
+    resolve(sortSessions(sessions));
+  });
+}
+
 function listProviderSessions(cwd, cmd) {
   return new Promise((resolve, reject) => {
+    // Reject anything not declared in cli.info.json. Without this gate the
+    // endpoint would exec arbitrary shell strings supplied by the client.
+    if (!allowedSessionCmds.has(cmd)) {
+      return reject({ error: `Session command not allowed: ${cmd}` });
+    }
+
+    // Claude Code has no `--list-sessions` command; sessions live as JSONL
+    // transcripts under ~/.claude/projects/<encoded-cwd>/. Route to the
+    // filesystem adapter when the configured cmd targets claude.
+    if (cmd.includes('claude')) {
+      listClaudeSessions(cwd).then(resolve).catch(reject);
+      return;
+    }
     // If the command appears to be a gemini call, reuse the gemini parser.
     if (cmd.includes('gemini')) {
       const parts = cmd.split(' ');
@@ -671,11 +906,12 @@ function listProviderSessions(cwd, cmd) {
           const m = line.match(regex);
           if (m) sessions.push({ index: parseInt(m[1]), title: m[2], time: m[3], id: m[4] });
         }
-        resolve(sessions);
+        resolve(sortSessions(sessions));
       });
       return;
     }
-    // Fallback: run the command directly and return raw lines.
+    // Allowlisted but unrecognized provider — exec the configured command
+    // and return raw lines. Safe because cmd is constrained to cli.info.json.
     const execOpts = { env: getProcessEnv() };
     if (cwd && fs.existsSync(cwd)) execOpts.cwd = cwd;
     exec(cmd, execOpts, (error, stdout, stderr) => {
@@ -688,10 +924,13 @@ function listProviderSessions(cwd, cmd) {
 
 // Endpoint for provider-specific session listing.
 app.get('/api/processes/:id/provider-sessions', async (req, res) => {
-  const config = processConfigs.find(c => c.guid === req.params.id || c.name === req.params.id);
+  const config = processConfigs.find(c => c.guid === req.params.id);
   if (!config) return res.status(404).json({ error: `Unknown process identifier: ${req.params.id}` });
   const cmd = req.query.cmd;
   if (!cmd) return res.status(400).json({ error: 'Missing cmd query parameter' });
+  if (!allowedSessionCmds.has(cmd)) {
+    return res.status(400).json({ error: `Session command not allowed: ${cmd}` });
+  }
   try {
     const sessions = await listProviderSessions(resolveTemplate(config.cwd), cmd);
     res.json(sessions);
@@ -704,9 +943,29 @@ app.post('/api/processes/:id/start', (req, res) => {
   res.json(startProcess(req.params.id));
 });
 
+app.get('/api/processes/:parentId/chats', (req, res) => {
+  res.json(listChats(req.params.parentId));
+});
+
+app.post('/api/processes/:parentId/chats', (req, res) => {
+  const { instruction, resumeId, title } = req.body || {};
+  const result = spawnChat(req.params.parentId, { instruction, resumeId, title });
+  if (result.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.delete('/api/processes/:parentId/chats/:chatId', (req, res) => {
+  const { parentId, chatId } = req.params;
+  const entry = processes.get(chatId);
+  if (!entry || entry.parentGuid !== parentId) {
+    return res.status(404).json({ error: `Chat "${chatId}" not found for parent "${parentId}"` });
+  }
+  res.json(killChat(chatId));
+});
+
 app.post('/api/processes/:id/resume/:resumeId', async (req, res) => {
   const { id, resumeId } = req.params;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config) return res.status(404).json({ error: `Unknown process identifier: ${id}` });
 
   try {
@@ -731,7 +990,7 @@ app.post('/api/processes/:id/stop', (req, res) => {
 
 app.post('/api/processes/:id/restart', async (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   const guid = config?.guid || id;
   const entry = processes.get(guid);
   if (entry && entry.status === 'running') {
@@ -757,7 +1016,7 @@ app.post('/api/processes/:id/restart', async (req, res) => {
 
 app.get('/api/processes/:id/files', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -790,7 +1049,7 @@ app.get('/api/processes/:id/files', (req, res) => {
 
 app.get('/api/processes/:id/search', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -851,7 +1110,7 @@ app.get('/api/processes/:id/search', (req, res) => {
 
 app.get('/api/processes/:id/file', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -877,7 +1136,7 @@ app.get('/api/processes/:id/file', (req, res) => {
 
 app.get('/api/processes/:id/file-raw', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -896,7 +1155,7 @@ app.get('/api/processes/:id/file-raw', (req, res) => {
 
 app.put('/api/processes/:id/file', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -921,7 +1180,7 @@ app.put('/api/processes/:id/file', (req, res) => {
 
 app.post('/api/processes/:id/file-path', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -934,7 +1193,7 @@ app.post('/api/processes/:id/file-path', (req, res) => {
 
 app.post('/api/processes/:id/ai-command', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
 
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -987,7 +1246,7 @@ app.post('/api/processes/:id/ai-command', (req, res) => {
 
 app.get('/api/processes/:id/git/branches', async (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
   
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -1010,7 +1269,7 @@ app.get('/api/processes/:id/git/branches', async (req, res) => {
 app.post('/api/processes/:id/git/checkout', async (req, res) => {
   const id = req.params.id;
   const { branch, strategy } = req.body;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
   if (!branch) return res.status(400).json({ error: 'Branch name is required' });
 
@@ -1066,7 +1325,7 @@ app.post('/api/processes/:id/git/checkout', async (req, res) => {
 
 app.post('/api/processes/:id/git/remote-status', async (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
   
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -1108,7 +1367,7 @@ app.post('/api/processes/:id/git/remote-status', async (req, res) => {
 app.post('/api/processes/:id/git/pull', async (req, res) => {
   const id = req.params.id;
   const { strategy } = req.body || {};
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
   
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -1133,7 +1392,7 @@ app.post('/api/processes/:id/git/pull', async (req, res) => {
 
 app.post('/api/processes/:id/git/push', async (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
   
   const resolvedCwd = resolveTemplate(config.cwd);
@@ -1300,8 +1559,7 @@ app.post('/api/browse-folder', (req, res) => {
 app.post('/api/start-all', (_req, res) => {
   const results = {};
   for (const config of processConfigs) {
-    const id = config.guid || config.name;
-    results[id] = startProcess(id);
+    results[config.guid] = startProcess(config.guid);
   }
   res.json(results);
 });
@@ -1309,8 +1567,7 @@ app.post('/api/start-all', (_req, res) => {
 app.post('/api/stop-all', (_req, res) => {
   const results = {};
   for (const config of processConfigs) {
-    const id = config.guid || config.name;
-    results[id] = stopProcess(id);
+    results[config.guid] = stopProcess(config.guid);
   }
   res.json(results);
 });
@@ -1365,7 +1622,7 @@ app.post('/api/config', (req, res) => {
 
 app.get('/api/config/:id', (req, res) => {
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config) {
     return res.status(404).json({ error: `Process "${id}" not found` });
   }
@@ -1374,7 +1631,7 @@ app.get('/api/config/:id', (req, res) => {
 
 app.put('/api/config/:id', (req, res) => {
   const id = req.params.id;
-  const idx = processConfigs.findIndex((c) => c.guid === id || c.name === id);
+  const idx = processConfigs.findIndex((c) => c.guid === id);
   if (idx === -1) {
     return res.status(404).json({ error: `Process "${id}" not found` });
   }
@@ -1404,14 +1661,10 @@ app.put('/api/config/:id', (req, res) => {
   processConfigs[idx] = updated;
   saveConfig();
 
-  if (updated.guid !== oldGuid || finalName !== existing.name) {
-    // If name or guid changed, we might need to migrate the internal state
-    // But since we use GUID as the primary key for 'processes' map, we only need to migrate if name was used.
-    // However, startProcess and stopProcess now use GUID if found.
-    const entry = processes.get(oldGuid) || processes.get(existing.name);
+  if (updated.guid !== oldGuid) {
+    const entry = processes.get(oldGuid);
     if (entry) {
       processes.delete(oldGuid);
-      processes.delete(existing.name);
       processes.set(updated.guid, entry);
     }
   }
@@ -1421,19 +1674,21 @@ app.put('/api/config/:id', (req, res) => {
 
 app.delete('/api/config/:id', (req, res) => {
   const id = req.params.id;
-  const idx = processConfigs.findIndex((c) => c.guid === id || c.name === id);
+  const idx = processConfigs.findIndex((c) => c.guid === id);
   if (idx === -1) {
     return res.status(404).json({ error: `Process "${id}" not found` });
   }
   const config = processConfigs[idx];
   const guid = config.guid;
-  const running = processes.get(guid) || processes.get(config.name);
+  const running = processes.get(guid);
   if (running && running.status === 'running') {
     stopProcess(guid);
   }
+  for (const [chatId, entry] of processes.entries()) {
+    if (entry.parentGuid === guid) killChat(chatId);
+  }
   processConfigs.splice(idx, 1);
   processes.delete(guid);
-  processes.delete(config.name);
   saveConfig();
   res.json({ ok: true });
 });
@@ -1518,7 +1773,7 @@ app.get('/api/tools', (_req, res) => {
 app.post('/api/processes/:id/tools/execute', (req, res) => {
   const { toolLabel, param, params } = req.body;
   const id = req.params.id;
-  const config = processConfigs.find((c) => c.guid === id || c.name === id);
+  const config = processConfigs.find((c) => c.guid === id);
   if (!config) return res.status(404).json({ error: 'Process not found' });
 
   const tool = toolsList.find(t => t.label === toolLabel);
@@ -1640,7 +1895,7 @@ async function bootstrap() {
     const id = url.searchParams.get('id') || url.searchParams.get('name'); // Fallback to name for legacy
     if (!id) { ws.close(1008, 'Missing id param'); return; }
 
-    const config = processConfigs.find((c) => c.guid === id || c.name === id);
+    const config = processConfigs.find((c) => c.guid === id);
     const guid = config?.guid || id;
 
     const entry = processes.get(guid);
@@ -1678,6 +1933,7 @@ async function bootstrap() {
             );
           }
         } else if (parsed.type === 'input') {
+          currentEntry.needsInput = false;
           if (currentEntry.ptyProc) {
             currentEntry.ptyProc.write(parsed.data);
           } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {
@@ -1686,6 +1942,7 @@ async function bootstrap() {
         }
       } catch {
         const data = msg.toString();
+        currentEntry.needsInput = false;
         if (currentEntry.ptyProc) {
           currentEntry.ptyProc.write(data);
         } else if (currentEntry.proc && currentEntry.proc.stdin && !currentEntry.proc.stdin.destroyed) {

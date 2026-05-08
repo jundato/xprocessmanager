@@ -152,6 +152,7 @@
     <WorkspaceModal
       :show="workspaceModalStore.show"
       :node-name="workspaceModalStore.nodeName"
+      :node-guid="workspaceModalStore.nodeGuid"
       :node-status="workspaceModalStatus"
       :is-agent="workspaceModalIsAgent"
       :log-panel-height="effectivePanelHeight"
@@ -169,6 +170,7 @@
     v-else
     :show="workspaceModalStore.show"
     :node-name="workspaceModalStore.nodeName"
+    :node-guid="workspaceModalStore.nodeGuid"
     :node-status="workspaceModalStatus"
     :is-agent="workspaceModalIsAgent"
     :log-panel-height="effectivePanelHeight"

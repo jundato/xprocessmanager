@@ -4,53 +4,50 @@
     @mouseenter="$emit('hover-cancel', node.guid)"
     @mouseleave="$emit('hover-enter', node.guid, cardRef, expanded, node.command)"
   >
-    <template v-if="node.status === 'starting' && !isSelected">
-      <button class="btn-icon" disabled title="Starting...">
-        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
-      </button>
-    </template>
-    <template v-else-if="node.status === 'stopping' && !isSelected">
-      <button class="btn-icon" disabled title="Stopping...">
-        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
-      </button>
-    </template>
-    <template v-if="node.status === 'running' && !isSelected">
-      <button
-        v-if="node.type === 'agent' && !node.needsInput"
-        ref="mainActionBtn"
-        class="btn-stop btn-icon"
-        @click.stop="$emit('stop', node.guid)"
-        @keydown.enter.stop="$emit('stop', node.guid)"
-        @keydown.space.stop.prevent="$emit('stop', node.guid)"
-        title="Loading..."
-      >
-        <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
-      </button>
-      <button
-        v-else
-        ref="mainActionBtn"
-        class="btn-stop btn-icon"
-        @click.stop="$emit('stop', node.guid)"
-        @keydown.enter.stop="$emit('stop', node.guid)"
-        @keydown.space.stop.prevent="$emit('stop', node.guid)"
-        title="Stop"
-      >
-        <i class="fa-solid fa-stop"></i>
-      </button>
-      <button class="btn-restart btn-icon" @click.stop="$emit('restart', node.guid)" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
-    </template>
-    <template v-else-if="!isSelected">
-      <button 
-        ref="mainActionBtn" 
-        class="btn-start btn-icon" 
-        @click.stop="$emit('start', node.guid)" 
-        @keydown.enter.stop="$emit('start', node.guid)"
-        @keydown.space.stop.prevent="$emit('start', node.guid)"
-        title="Start"
-      >
-        <i class="fa-solid fa-play"></i>
-      </button>
-
+    <button
+      v-if="node.type === 'agent' && inPanel"
+      class="btn-icon btn-chat"
+      @click.stop="$emit('chat', node.guid)"
+      title="New chat"
+    >
+      <i class="fa-solid fa-comment-dots"></i>
+    </button>
+    <template v-if="node.type !== 'agent'">
+      <template v-if="node.status === 'starting' && !isSelected">
+        <button class="btn-icon" disabled title="Starting...">
+          <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
+        </button>
+      </template>
+      <template v-else-if="node.status === 'stopping' && !isSelected">
+        <button class="btn-icon" disabled title="Stopping...">
+          <i class="fa-solid fa-spinner fa-spin" style="color: var(--yellow);"></i>
+        </button>
+      </template>
+      <template v-if="node.status === 'running' && !isSelected">
+        <button
+          ref="mainActionBtn"
+          class="btn-stop btn-icon"
+          @click.stop="$emit('stop', node.guid)"
+          @keydown.enter.stop="$emit('stop', node.guid)"
+          @keydown.space.stop.prevent="$emit('stop', node.guid)"
+          title="Stop"
+        >
+          <i class="fa-solid fa-stop"></i>
+        </button>
+        <button class="btn-restart btn-icon" @click.stop="$emit('restart', node.guid)" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
+      </template>
+      <template v-else-if="!isSelected">
+        <button
+          ref="mainActionBtn"
+          class="btn-start btn-icon"
+          @click.stop="$emit('start', node.guid)"
+          @keydown.enter.stop="$emit('start', node.guid)"
+          @keydown.space.stop.prevent="$emit('start', node.guid)"
+          title="Start"
+        >
+          <i class="fa-solid fa-play"></i>
+        </button>
+      </template>
     </template>
     <button v-if="node.cwd && (isSelected ? !terminalOpen : true)" class="btn-icon btn-workspace" :class="{ active: workspaceOpen }" @click.stop="$emit('open-workspace', node)" title="Toggle Workspace">
       <i :class="node.type === 'agent' ? 'fa-solid fa-laptop-code' : 'fa-solid fa-folder-open'"></i>
@@ -125,9 +122,10 @@ const props = defineProps({
   cardRef: { type: Object, default: null },
   expanded: { type: Boolean, default: false },
   showEdit: { type: Boolean, default: true },
+  inPanel: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['start', 'stop', 'restart', 'edit', 'open-workspace', 'hover-cancel', 'hover-enter'])
+const emit = defineEmits(['start', 'stop', 'restart', 'edit', 'open-workspace', 'hover-cancel', 'hover-enter', 'chat'])
 
 const { showAlert } = useAlert()
 const { executeTool } = useTasks()
