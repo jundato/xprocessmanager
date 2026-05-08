@@ -25,7 +25,15 @@
         <i class="fa-solid fa-xmark"></i>
       </button>
     </div>
-    <div v-show="expanded" class="chat-item-body">
+    <div
+      v-show="expanded"
+      class="chat-item-body"
+      :class="{ 'drag-over': dragOver }"
+      @dragenter.stop.prevent="onDragEnter"
+      @dragover.stop.prevent="onDragOver"
+      @dragleave.stop.prevent="onDragLeave"
+      @drop.stop.prevent="onDrop"
+    >
       <BaseTerminal
         ref="terminalRef"
         :options="{ cursorBlink: true }"
@@ -33,6 +41,10 @@
         @resize="onResize"
         @data="onData"
       />
+      <div v-if="dragOver" class="chat-drop-overlay">
+        <i class="fa-solid fa-file-import"></i>
+        <span>Drop to insert path</span>
+      </div>
     </div>
   </div>
 </template>
@@ -40,6 +52,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import BaseTerminal from './BaseTerminal.vue'
+import { resolveDroppedPaths, shellQuote } from '../composables/useFileDrop'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -48,6 +61,8 @@ const emit = defineEmits(['close'])
 
 const expanded = ref(true)
 const terminalRef = ref(null)
+const dragOver = ref(false)
+let dragCounter = 0
 let ws = null
 let wsRetryTimer = null
 let killed = false
@@ -103,6 +118,33 @@ function onData(data) {
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'input', data }))
   }
+}
+
+function onDragEnter() {
+  dragCounter++
+  dragOver.value = true
+  if (!expanded.value) expanded.value = true
+}
+function onDragOver(ev) {
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy'
+}
+function onDragLeave() {
+  dragCounter--
+  if (dragCounter <= 0) {
+    dragCounter = 0
+    dragOver.value = false
+  }
+}
+async function onDrop(ev) {
+  dragCounter = 0
+  dragOver.value = false
+  const parentGuid = props.chat.chatId.split('::')[0]
+  const paths = await resolveDroppedPaths(ev, parentGuid)
+  if (paths.length === 0) return
+  if (!ws || ws.readyState !== 1) return
+  const text = paths.map(shellQuote).join(' ') + ' '
+  ws.send(JSON.stringify({ type: 'input', data: text }))
+  terminalRef.value?.focus()
 }
 
 watch(expanded, (v) => {
@@ -238,8 +280,32 @@ defineExpose({ markKilled })
   height: 320px;
   background: #0f1117;
   display: flex;
+  position: relative;
 }
 .chat-item-body :deep(.base-terminal-container) {
   flex: 1;
+}
+.chat-item-body.drag-over {
+  outline: 2px dashed color-mix(in srgb, var(--blue, #60a5fa) 70%, transparent);
+  outline-offset: -4px;
+}
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(15, 17, 23, 0.78);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 2;
+}
+.chat-drop-overlay i {
+  font-size: 28px;
+  color: var(--blue, #60a5fa);
 }
 </style>

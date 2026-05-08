@@ -1191,6 +1191,44 @@ app.post('/api/processes/:id/file-path', (req, res) => {
   res.json({ fullPath });
 });
 
+// Drop-target for browser drags where the real path isn't exposed. Client
+// uploads the bytes; we persist to <node-cwd>/tmp/<basename> (overwriting
+// any previous drop with the same name) and return the absolute path the
+// caller can paste into a terminal.
+function sanitizeBasename(name) {
+  if (!name) return 'unnamed';
+  // Strip path separators and control chars.
+  let safe = String(name).replace(/[\x00-\x1f]/g, '').replace(/[\\/]/g, '_').trim();
+  if (!safe || safe === '.' || safe === '..') safe = 'unnamed';
+  return safe.slice(0, 255);
+}
+app.post('/api/processes/:id/upload-tmp',
+  express.raw({ type: 'application/octet-stream', limit: '200mb' }),
+  (req, res) => {
+    const id = req.params.id;
+    const config = processConfigs.find((c) => c.guid === id);
+    if (!config) return res.status(404).json({ error: `Unknown process identifier: ${id}` });
+    if (!config.cwd) return res.status(400).json({ error: 'Node has no cwd' });
+
+    const rawName = req.get('X-Filename');
+    if (!rawName) return res.status(400).json({ error: 'Missing X-Filename header' });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'Empty body — expected application/octet-stream' });
+    }
+
+    try {
+      const resolvedCwd = resolveTemplate(config.cwd);
+      const dropDir = path.join(resolvedCwd, 'tmp');
+      fs.mkdirSync(dropDir, { recursive: true });
+      const basename = sanitizeBasename(decodeURIComponent(rawName));
+      const fullPath = path.join(dropDir, basename);
+      fs.writeFileSync(fullPath, req.body);
+      res.json({ fullPath });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 app.post('/api/processes/:id/ai-command', (req, res) => {
   const id = req.params.id;
   const config = processConfigs.find((c) => c.guid === id);

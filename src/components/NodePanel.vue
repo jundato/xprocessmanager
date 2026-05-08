@@ -105,7 +105,7 @@
     </div>
     
     <div
-      v-if="dragOverTerminal"
+      v-if="dragOverTerminal && node?.type !== 'agent'"
       class="terminal-drop-overlay"
       @dragenter.stop.prevent
       @dragover.stop.prevent
@@ -128,7 +128,6 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAlert } from '../composables/useAlert'
 import { api } from '../composables/useApi'
-import { useNotifications } from '../composables/useNotifications'
 import { useSessions } from '../composables/useSessions'
 import { useChats } from '../composables/useChats'
 import CardActions from './CardActions.vue'
@@ -136,6 +135,7 @@ import GitBranchTag from './GitBranchTag.vue'
 import BaseTerminal from './BaseTerminal.vue'
 import ChatItem from './ChatItem.vue'
 import ChatModal from './ChatModal.vue'
+import { resolveDroppedPaths, shellQuote as droppedShellQuote } from '../composables/useFileDrop'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -147,7 +147,6 @@ const props = defineProps({
 })
 
 
-const { addNotification } = useNotifications()
 const { showAlert } = useAlert()
 
 const nodeName = computed(() => props.node?.name)
@@ -332,37 +331,18 @@ function onDragEnter() { dragOverTerminal.value = true }
 function onDragLeave() { dragOverTerminal.value = false }
 function onDragOver() {}
 
-// POSIX-safe shell quoting. Single-quote the path and escape embedded quotes.
-function shellQuote(p) {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(p)) return p
-  return `'${p.replace(/'/g, `'\\''`)}'`
-}
-
-// Browsers don't expose absolute paths from Finder/Explorer drags. The server
-// resolves the dropped filename against the node's cwd and returns the
-// absolute path, which we then insert into the terminal.
+// For agent nodes the panel itself has no terminal — each chat handles its
+// own drop. For non-agent nodes, resolve real OS paths when exposed and
+// otherwise upload the file bytes to the server's drop tmp dir.
 async function onDrop(ev) {
   dragOverTerminal.value = false
-  const files = ev.dataTransfer?.files
-  if (!files || files.length === 0 || !nodeGuid.value) return
+  if (props.node?.type === 'agent') return
+  if (!nodeGuid.value) return
 
-  const resolved = []
-  for (const file of files) {
-    try {
-      const result = await api(
-        `/api/processes/${encodeURIComponent(nodeGuid.value)}/file-path`,
-        'POST',
-        { path: file.name }
-      )
-      if (result?.fullPath) resolved.push(result.fullPath)
-      else throw new Error(result?.error || 'no path returned')
-    } catch (err) {
-      addNotification(`Could not resolve path for ${file.name}: ${err.message}`, 'error')
-    }
-  }
-  if (resolved.length === 0) return
+  const paths = await resolveDroppedPaths(ev, nodeGuid.value)
+  if (paths.length === 0) return
 
-  const text = resolved.map(shellQuote).join(' ') + ' '
+  const text = paths.map(droppedShellQuote).join(' ') + ' '
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'input', data: text }))
     terminalRef.value?.focus()
