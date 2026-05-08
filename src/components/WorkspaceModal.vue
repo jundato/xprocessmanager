@@ -91,6 +91,9 @@
                 <span class="breadcrumb-sep">/</span>
                 <span class="breadcrumb-segment" @click="navigateTo(pathSegments.slice(0, i + 1).join('/'))">{{ seg }}</span>
               </template>
+              <button class="btn-ghost btn-icon" style="margin-left: auto; font-size: 11px;" @click="fetchFiles(currentPath)" title="Refresh files">
+                <i class="fa-solid fa-rotate" :class="{ 'fa-spin': listLoading }"></i>
+              </button>
             </div>
             <div class="workspace-file-list">
               <div class="workspace-file-list-header">
@@ -164,7 +167,11 @@
                   {{ activeTab?.path }}
                 </span>
                 <div style="display: flex; gap: 6px; align-items: center">
+                  <button class="btn-ghost btn-icon" style="font-size: 11px;" @click="refreshActiveFile" title="Refresh file from disk">
+                    <i class="fa-solid fa-rotate" :class="{ 'fa-spin': fileLoading }"></i>
+                  </button>
                   <button v-if="isMarkdown" class="btn-ghost" style="padding: 3px 10px; font-size: 11px" @click="toggleMarkdownEdit">
+
                     <i :class="markdownEditMode ? 'fa-solid fa-eye' : 'fa-solid fa-pen'" style="margin-right: 4px"></i>
                     {{ markdownEditMode ? 'Preview' : 'Edit Source' }}
                   </button>
@@ -203,22 +210,19 @@
     </div>
     
     <!-- Mermaid Editor UI -->
-    <Teleport to="body">
-      <MermaidEditor
-        v-if="mermaidEditorOpen"
-        :initialCode="mermaidEditorCode"
-        @save="onMermaidSave"
-        @cancel="closeMermaidEditor"
-      />
-    </Teleport>
+    <MermaidEditor
+      v-if="mermaidEditorOpen"
+      :initialCode="mermaidEditorCode"
+      @save="onMermaidSave"
+      @cancel="closeMermaidEditor"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onUnmounted, shallowRef, markRaw, defineAsyncComponent } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onUnmounted, shallowRef, markRaw } from 'vue'
 import { api } from '../composables/useApi.js'
-
-const MermaidEditor = defineAsyncComponent(() => import('./MermaidEditor.vue'))
+import MermaidEditor from './MermaidEditor.vue'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -487,15 +491,15 @@ function closeMermaidEditor() {
 }
 
 async function onMermaidSave(newCode) {
-  if (mermaidEditorIndex.value === null || !activeTab.value?.originalContent) return
-  
-  const text = activeTab.value.originalContent
-  const lines = text.split('\n')
+  if (mermaidEditorIndex.value === null || !activeTab.value?.model) return
+
+  const currentContent = activeTab.value.model.getValue()
+  const lines = currentContent.split('\n')
   let currentMermaidIndex = -1
   let inMermaid = false
   let startIndex = -1
   let endIndex = -1
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim()
     if (line.startsWith('```mermaid')) {
@@ -509,49 +513,60 @@ async function onMermaidSave(newCode) {
       break
     }
   }
-  
+
   if (startIndex !== -1 && endIndex !== -1) {
     const codeFixed = newCode.endsWith('\n') ? newCode : newCode + '\n'
     const before = lines.slice(0, startIndex + 1)
     const after = lines.slice(endIndex)
-    activeTab.value.originalContent = before.join('\n') + '\n' + codeFixed.replace(/\n$/, '') + '\n' + after.join('\n')
+    const newContent = before.join('\n') + '\n' + codeFixed + after.join('\n')
     
-    if (editorInstance && activeTab.value.type === 'file' && activeTab.value.model) {
-      activeTab.value.model.setValue(activeTab.value.originalContent)
-      dirty.value = true
-    }
+    activeTab.value.model.setValue(newContent)
+    // We don't update originalContent here because we want it to stay dirty 
+    // until the user explicitly saves the file.
+    dirty.value = true
     
-    renderedMarkdown.value = renderMarkdown(activeTab.value.originalContent)
+    renderedMarkdown.value = renderMarkdown(newContent)
     await renderMermaidBlocks()
   }
-  
+
   closeMermaidEditor()
 }
 
-
+let isRenderingMermaid = false
 async function renderMermaidBlocks() {
-  await nextTick()
-  if (!mdPreviewRef.value) return
-  const placeholders = mdPreviewRef.value.querySelectorAll('.mermaid-placeholder')
-  if (!placeholders.length) return
+  if (isRenderingMermaid) return
+  isRenderingMermaid = true
+  try {
+    await nextTick()
+    if (!mdPreviewRef.value) return
+    const placeholders = mdPreviewRef.value.querySelectorAll('.mermaid-placeholder')
+    if (!placeholders.length) return
 
-  const mermaid = await loadMermaid()
-  for (const el of placeholders) {
-    const id = el.getAttribute('data-mermaid-id')
-    const index = el.getAttribute('data-mermaid-index')
-    const code = el.textContent
-    try {
-      const { svg } = await mermaid.render(id, code)
-      el.innerHTML = svg
-      el.classList.add('mermaid-rendered')
-      // Make it interactive
-      el.onclick = () => openMermaidEditor(index, code)
-      el.style.transition = 'transform 0.1s ease, box-shadow 0.1s ease'
-      el.onmouseenter = () => { el.style.transform = 'scale(1.02)'; el.style.boxShadow = '0 4px 12px rgba(255, 255, 255, 0.05)' }
-      el.onmouseleave = () => { el.style.transform = 'scale(1)'; el.style.boxShadow = 'none' }
-    } catch {
-      el.classList.add('mermaid-error')
+    const mermaid = await loadMermaid()
+    for (const el of placeholders) {
+      const id = el.getAttribute('data-mermaid-id')
+      const index = el.getAttribute('data-mermaid-index')
+      const code = el.textContent
+      try {
+        const { svg } = await mermaid.render(id, code)
+        el.innerHTML = svg
+        el.classList.add('mermaid-rendered')
+        // Make it interactive
+        el.onclick = (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          openMermaidEditor(index, code)
+        }
+        el.style.transition = 'transform 0.1s ease, box-shadow 0.1s ease'
+        el.onmouseenter = () => { el.style.transform = 'scale(1.02)'; el.style.boxShadow = '0 4px 12px rgba(255, 255, 255, 0.05)' }
+        el.onmouseleave = () => { el.style.transform = 'scale(1)'; el.style.boxShadow = 'none' }
+      } catch (err) {
+        console.error('Mermaid render error:', err)
+        el.classList.add('mermaid-error')
+      }
     }
+  } finally {
+    isRenderingMermaid = false
   }
 }
 
@@ -694,9 +709,15 @@ async function createEditor(filePath, content, goToLine) {
       padding: { top: 8 },
     })
 
-    editorInstance.onDidChangeModelContent(() => {
+    editorInstance.onDidChangeModelContent(async () => {
       if (activeTab.value?.type === 'file') {
-        dirty.value = editorInstance.getValue() !== activeTab.value.originalContent
+        const val = editorInstance.getValue()
+        dirty.value = val !== activeTab.value.originalContent
+
+        if (activeTab.value.path.toLowerCase().endsWith('.md')) {
+          renderedMarkdown.value = renderMarkdown(val)
+          await renderMermaidBlocks()
+        }
       }
     })
 
@@ -755,6 +776,36 @@ async function saveFile() {
   if (res.error) { fileError.value = res.error; return }
   activeTab.value.originalContent = editorInstance.getValue()
   dirty.value = false
+}
+
+async function refreshActiveFile() {
+  if (!activeTab.value || activeTab.value.type !== 'file') return
+  const filePath = activeTab.value.path
+  const isDirty = editorInstance && editorInstance.getValue() !== activeTab.value.originalContent
+  if (isDirty && !confirm('You have unsaved changes. Refreshing will overwrite them. Continue?')) return
+
+  fileLoading.value = true
+  fileError.value = null
+  try {
+    const res = await api(`/api/processes/${encodeURIComponent(props.nodeName)}/file?path=${encodeURIComponent(filePath)}`)
+    if (res.error) {
+      fileError.value = res.error
+      return
+    }
+    activeTab.value.originalContent = res.content
+    if (activeTab.value.model) {
+      activeTab.value.model.setValue(res.content)
+    }
+    dirty.value = false
+    if (filePath.toLowerCase().endsWith('.md')) {
+      renderedMarkdown.value = renderMarkdown(res.content)
+      await renderMermaidBlocks()
+    }
+  } catch (err) {
+    fileError.value = err.message
+  } finally {
+    fileLoading.value = false
+  }
 }
 
 // ── Embedded Terminal ───────────────────────

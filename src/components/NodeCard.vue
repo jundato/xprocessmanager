@@ -12,7 +12,6 @@
       <i :class="[typeIcon, 'node-type-icon', node.status]" :title="node.type"></i>
       {{ node.name }}
       <i v-if="node.type === 'script' && node.status === 'running'" class="fa-solid fa-spinner script-running-spinner" title="Running..."></i>
-      <i v-if="node.needsInput" class="fa-solid fa-keyboard fa-fade" style="color: #fbbf24;" title="Waiting for input..."></i>
     </div>
     <div class="card-header">
       <div class="card-header-left">
