@@ -69,6 +69,7 @@ if (fs.existsSync(envConfigPath)) {
 
 const groupsConfigPath = path.join(__dirname, 'groups.config.json');
 const toolsConfigPath = path.join(__dirname, 'tools.config.json');
+const skillsDir = path.join(__dirname, 'skills');
 const DEFAULT_GROUP_DEFS = [
   { name: 'infra', color: '#a78bfa' },
   { name: 'frontend', color: '#60a5fa' },
@@ -178,6 +179,102 @@ function saveToolsConfig() {
   fs.writeFileSync(toolsConfigPath, JSON.stringify(toolsList, null, 2) + '\n');
 }
 
+// ── Skills ──────────────────────────────────────────────────────────────
+// Skills live under ./skills/<name>/SKILL.md (folder per skill so companion
+// files like references/ and scripts/ can sit alongside). The UI surfaces
+// only name + description from frontmatter; the body is edited externally
+// (or replaced via upload). See cli-unification.md.
+
+const SKILL_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+function isValidSkillName(name) {
+  return typeof name === 'string' && SKILL_NAME_RE.test(name);
+}
+
+function parseSkillFrontmatter(text) {
+  if (typeof text !== 'string') return { meta: {}, body: '' };
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return { meta: {}, body: text };
+  const meta = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^(\w[\w-]*)\s*:\s*(.*)$/);
+    if (!kv) continue;
+    let v = kv[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    meta[kv[1]] = v;
+  }
+  return { meta, body: m[2] };
+}
+
+function serializeSkillFile(meta, body) {
+  const lines = ['---'];
+  for (const [k, v] of Object.entries(meta)) {
+    if (v === undefined || v === null) continue;
+    const s = String(v);
+    const needsQuote = /[:#\n]/.test(s);
+    lines.push(`${k}: ${needsQuote ? JSON.stringify(s) : s}`);
+  }
+  lines.push('---', '', body || '');
+  return lines.join('\n');
+}
+
+function readSkillRow(name) {
+  if (!isValidSkillName(name)) return null;
+  const file = path.join(skillsDir, name, 'SKILL.md');
+  if (!fs.existsSync(file)) return null;
+  try {
+    const { meta } = parseSkillFrontmatter(fs.readFileSync(file, 'utf-8'));
+    return {
+      name,
+      description: meta.description || '',
+    };
+  } catch {
+    return { name, description: '' };
+  }
+}
+
+function listSkills() {
+  if (!fs.existsSync(skillsDir)) return [];
+  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  const out = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const row = readSkillRow(e.name);
+    if (row) out.push(row);
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+function writeSkillFile(name, description, body) {
+  const dir = path.join(skillsDir, name);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'SKILL.md');
+  let existingBody = body;
+  if (existingBody === undefined && fs.existsSync(file)) {
+    existingBody = parseSkillFrontmatter(fs.readFileSync(file, 'utf-8')).body;
+  }
+  fs.writeFileSync(file, serializeSkillFile({ name, description: description || '' }, existingBody || '\n# Instructions\n\n'));
+}
+
+function deleteSkill(name) {
+  if (!isValidSkillName(name)) return;
+  const dir = path.join(skillsDir, name);
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function renameSkill(oldName, newName) {
+  if (!isValidSkillName(oldName) || !isValidSkillName(newName)) return false;
+  if (oldName === newName) return true;
+  const oldDir = path.join(skillsDir, oldName);
+  const newDir = path.join(skillsDir, newName);
+  if (!fs.existsSync(oldDir) || fs.existsSync(newDir)) return false;
+  fs.renameSync(oldDir, newDir);
+  return true;
+}
+
 function saveConfig() {
   const cleanConfigs = processConfigs.filter(c => c && typeof c === 'object');
   fs.writeFileSync(configPath, JSON.stringify(cleanConfigs, null, 2) + '\n');
@@ -206,6 +303,24 @@ function disconnectPtyClients(name) {
   for (const ws of clients) {
     try { ws.close(1000, 'PTY exited'); } catch {}
   }
+}
+
+// Global UI broadcast channel — for notifications, focus, etc.
+// Targets every connected UI client, not a specific process.
+const uiClients = new Set();
+function broadcastUi(payload) {
+  const msg = JSON.stringify(payload);
+  for (const ws of uiClients) {
+    try { if (ws.readyState === 1) ws.send(msg); } catch {}
+  }
+}
+
+function findCard(idOrName) {
+  if (!idOrName) return null;
+  const key = String(idOrName);
+  return processConfigs.find(c => c.guid === key)
+      || processConfigs.find(c => c.name === key)
+      || null;
 }
 
 const INPUT_PATTERNS = [
@@ -523,7 +638,7 @@ function startProcess(id, resumeId = null) {
   return { ok: true };
 }
 
-function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
+function spawnChat(parentGuid, { instruction, resumeId, title, cols, rows } = {}) {
   const config = processConfigs.find((c) => c.guid === parentGuid);
   if (!config) return { error: `Unknown process identifier: ${parentGuid}` };
   if ((config.type || 'service') !== 'agent') {
@@ -532,7 +647,8 @@ function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
   if (!pty || !config.usePty) {
     return { error: `Chat requires a PTY-enabled agent` };
   }
-  if (typeof instruction !== 'string' || !instruction.trim()) {
+  const hasInstruction = typeof instruction === 'string' && instruction.trim().length > 0;
+  if (!hasInstruction && !resumeId) {
     return { error: 'Instruction is required' };
   }
 
@@ -550,7 +666,7 @@ function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
     }
   }
 
-  const resolvedArgs = [...baseArgs, instruction];
+  const resolvedArgs = hasInstruction ? [...baseArgs, instruction] : baseArgs;
   const env = getProcessEnv();
 
   const entry = {
@@ -561,7 +677,7 @@ function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
     startedAt: Date.now(),
     config,
     parentGuid,
-    instruction,
+    instruction: hasInstruction ? instruction : null,
     resumeId: resumeId || null,
     title: title || null,
   };
@@ -569,10 +685,16 @@ function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
   let proc;
   try {
     console.log(`[xpm] Spawning chat (pty): ${config.command} ${JSON.stringify(resolvedArgs)} cwd=${resolvedCwd || '(none)'}`);
+    // Honor the client's intended cols/rows so the very first agent draw
+    // (e.g. claude --resume re-rendering the transcript) is formatted for
+    // the actual chat panel width. Without this the buffer is captured at
+    // 100 cols and replayed into a narrower xterm, garbling line wraps.
+    const initialCols = Number.isFinite(cols) ? Math.max(20, Math.min(300, Math.floor(cols))) : 100;
+    const initialRows = Number.isFinite(rows) ? Math.max(5, Math.min(100, Math.floor(rows))) : 40;
     proc = pty.spawn('/usr/bin/env', [config.command, ...resolvedArgs], {
       name: 'xterm-256color',
-      cols: 100,
-      rows: 40,
+      cols: initialCols,
+      rows: initialRows,
       cwd: resolvedCwd || process.cwd(),
       env,
     });
@@ -614,7 +736,7 @@ function spawnChat(parentGuid, { instruction, resumeId, title } = {}) {
   return {
     ok: true,
     chatId,
-    instruction,
+    instruction: entry.instruction,
     title: entry.title,
     resumeId: entry.resumeId,
     startedAt: entry.startedAt,
@@ -697,6 +819,11 @@ const publicDir = path.join(__dirname, 'public');
 
 app.use(express.json({ limit: '50mb' }));
 app.get('/api/processes', (_req, res) => {
+  const chatCounts = new Map();
+  for (const entry of processes.values()) {
+    if (!entry.parentGuid || entry.status !== 'running') continue;
+    chatCounts.set(entry.parentGuid, (chatCounts.get(entry.parentGuid) || 0) + 1);
+  }
   const result = processConfigs.map((config) => {
     const state = getState(config.guid);
     const resolvedCwd = resolveTemplate(config.cwd);
@@ -715,6 +842,7 @@ app.get('/api/processes', (_req, res) => {
       pid: state.pid,
       startedAt: state.startedAt,
       needsInput: state.needsInput,
+      chatCount: chatCounts.get(config.guid) || 0,
     };
   });
   res.json(result);
@@ -948,8 +1076,8 @@ app.get('/api/processes/:parentId/chats', (req, res) => {
 });
 
 app.post('/api/processes/:parentId/chats', (req, res) => {
-  const { instruction, resumeId, title } = req.body || {};
-  const result = spawnChat(req.params.parentId, { instruction, resumeId, title });
+  const { instruction, resumeId, title, cols, rows } = req.body || {};
+  const result = spawnChat(req.params.parentId, { instruction, resumeId, title, cols, rows });
   if (result.error) return res.status(400).json(result);
   res.json(result);
 });
@@ -1178,6 +1306,38 @@ app.put('/api/processes/:id/file', (req, res) => {
   }
 });
 
+app.delete('/api/processes/:id/file', (req, res) => {
+  const id = req.params.id;
+  const config = processConfigs.find((c) => c.guid === id);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+
+  const resolvedCwd = resolveTemplate(config.cwd);
+  const paths = Array.isArray(req.body?.paths) ? req.body.paths : (req.body?.path ? [req.body.path] : []);
+  if (!paths.length) return res.status(400).json({ error: 'path or paths is required' });
+
+  const deleted = [];
+  const errors = [];
+
+  for (const p of paths) {
+    const fullPath = path.resolve(resolvedCwd, p);
+    if (!fullPath.startsWith(resolvedCwd) || fullPath === resolvedCwd) {
+      errors.push({ path: p, error: 'Access denied' });
+      continue;
+    }
+    try {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+      deleted.push(p);
+    } catch (err) {
+      errors.push({ path: p, error: err.message });
+    }
+  }
+
+  if (errors.length && !deleted.length) {
+    return res.status(500).json({ error: errors[0].error, errors });
+  }
+  res.json({ ok: true, deleted, errors });
+});
+
 app.post('/api/processes/:id/file-path', (req, res) => {
   const id = req.params.id;
   const config = processConfigs.find((c) => c.guid === id);
@@ -1358,6 +1518,38 @@ app.post('/api/processes/:id/git/checkout', async (req, res) => {
       return res.status(409).json({ error: 'CONFLICT', message: msg });
     }
     res.status(500).json({ error: `Git checkout failed: ${msg}` });
+  }
+});
+
+app.get('/api/processes/:id/git/status', async (req, res) => {
+  const id = req.params.id;
+  const config = processConfigs.find((c) => c.guid === id);
+  if (!config || !config.cwd) return res.status(404).json({ error: 'Process or CWD not found' });
+
+  const resolvedCwd = resolveTemplate(config.cwd);
+  try {
+    const output = execFileSync('git', ['status', '--porcelain'], {
+      cwd: resolvedCwd,
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const files = output.split('\n').filter(Boolean).map((line) => {
+      const x = line[0];
+      const y = line[1];
+      const rest = line.slice(3);
+      const path = rest.includes(' -> ') ? rest.split(' -> ')[1] : rest;
+      let state;
+      if (x === '?' && y === '?') state = 'untracked';
+      else if (x === '!' && y === '!') state = 'ignored';
+      else if (x !== ' ' && y !== ' ') state = 'staged+unstaged';
+      else if (x !== ' ') state = 'staged';
+      else state = 'unstaged';
+      return { path, state, x, y };
+    });
+    res.json({ count: files.length, files });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to read git status: ${err.message}` });
   }
 });
 
@@ -1591,6 +1783,156 @@ app.post('/api/browse-folder', (req, res) => {
       } catch {}
     }
     res.json({ cancelled: true });
+  }
+});
+
+// ── Generic control dispatcher ──────────────
+// One endpoint, action-keyed. Address cards by `name` or `guid`.
+//   POST /api/control { "action": "card.start", "card": "web" }
+//   POST /api/control { "action": "ui.notify", "message": "Build done", "type": "success" }
+const CONTROL_ACTIONS = {
+  'card.start': {
+    description: 'Start a card by name or guid',
+    params: { card: 'name or guid (required)', resumeId: 'optional session id' },
+    run: ({ card, resumeId }) => {
+      const cfg = findCard(card);
+      if (!cfg) return { status: 404, body: { error: `card not found: ${card}` } };
+      return { body: startProcess(cfg.guid, resumeId || null) };
+    },
+  },
+  'card.stop': {
+    description: 'Stop a card by name or guid',
+    params: { card: 'name or guid (required)' },
+    run: ({ card }) => {
+      const cfg = findCard(card);
+      if (!cfg) return { status: 404, body: { error: `card not found: ${card}` } };
+      return { body: stopProcess(cfg.guid) };
+    },
+  },
+  'card.restart': {
+    description: 'Restart a card by name or guid',
+    params: { card: 'name or guid (required)' },
+    run: async ({ card }) => {
+      const cfg = findCard(card);
+      if (!cfg) return { status: 404, body: { error: `card not found: ${card}` } };
+      const entry = processes.get(cfg.guid);
+      if (entry && entry.status === 'running') {
+        stopProcess(cfg.guid);
+        await new Promise((resolve) => {
+          const check = setInterval(() => {
+            const s = getState(cfg.guid);
+            if (s.status !== 'running' && s.status !== 'stopping') {
+              clearInterval(check); resolve();
+            }
+          }, 200);
+          setTimeout(() => { clearInterval(check); resolve(); }, 10000);
+        });
+      }
+      return { body: startProcess(cfg.guid) };
+    },
+  },
+  'card.input': {
+    description: 'Send input (followed by Return) to a running card',
+    params: { card: 'name or guid (required)', input: 'string to send (required)' },
+    run: ({ card, input }) => {
+      if (typeof input !== 'string') {
+        return { status: 400, body: { error: 'input (string) is required' } };
+      }
+      const cfg = findCard(card);
+      if (!cfg) return { status: 404, body: { error: `card not found: ${card}` } };
+      const entry = processes.get(cfg.guid);
+      if (!entry || entry.status !== 'running') {
+        return { status: 400, body: { error: `${cfg.name} is not running` } };
+      }
+      entry.needsInput = false;
+      if (entry.ptyProc) {
+        entry.ptyProc.write(input + '\r');
+      } else if (entry.proc && entry.proc.stdin && !entry.proc.stdin.destroyed) {
+        entry.proc.stdin.write(input + '\r');
+      } else {
+        return { status: 400, body: { error: `${cfg.name} stdin is not available` } };
+      }
+      appendLog(entry, 'stdin', input);
+      return { body: { ok: true } };
+    },
+  },
+  'card.startGroup': {
+    description: 'Start every card in a group',
+    params: { group: 'group name (required)' },
+    run: ({ group }) => {
+      const matches = processConfigs.filter(c => c.group === group);
+      if (matches.length === 0) return { status: 404, body: { error: `no cards in group: ${group}` } };
+      const results = {};
+      for (const c of matches) results[c.name] = startProcess(c.guid);
+      return { body: { group, count: matches.length, results } };
+    },
+  },
+  'card.stopGroup': {
+    description: 'Stop every card in a group',
+    params: { group: 'group name (required)' },
+    run: ({ group }) => {
+      const matches = processConfigs.filter(c => c.group === group);
+      if (matches.length === 0) return { status: 404, body: { error: `no cards in group: ${group}` } };
+      const results = {};
+      for (const c of matches) results[c.name] = stopProcess(c.guid);
+      return { body: { group, count: matches.length, results } };
+    },
+  },
+  'ui.notify': {
+    description: 'Broadcast a toast notification to all connected UI clients',
+    params: {
+      message: 'string (required)',
+      type: 'success | error | info | warning (default: info)',
+      duration: 'ms (default: 3000, 0 = sticky)',
+    },
+    run: ({ message, type, duration }) => {
+      if (!message || typeof message !== 'string') {
+        return { status: 400, body: { error: 'message (string) is required' } };
+      }
+      const validTypes = new Set(['success', 'error', 'info', 'warning']);
+      const t = validTypes.has(type) ? type : 'info';
+      const d = Number.isFinite(duration) ? duration : 3000;
+      broadcastUi({ kind: 'notify', message, type: t, duration: d });
+      return { body: { ok: true, delivered: uiClients.size } };
+    },
+  },
+  'ui.focus': {
+    description: 'Focus a card in the UI (selects it and opens its log panel)',
+    params: { card: 'name or guid (required)' },
+    run: ({ card }) => {
+      const cfg = findCard(card);
+      if (!cfg) return { status: 404, body: { error: `card not found: ${card}` } };
+      broadcastUi({ kind: 'focus', guid: cfg.guid, name: cfg.name });
+      return { body: { ok: true, delivered: uiClients.size } };
+    },
+  },
+};
+
+app.get('/api/control', (_req, res) => {
+  const actions = {};
+  for (const [name, def] of Object.entries(CONTROL_ACTIONS)) {
+    actions[name] = { description: def.description, params: def.params };
+  }
+  res.json({ endpoint: 'POST /api/control', body: '{ "action": "<name>", ...params }', actions });
+});
+
+app.post('/api/control', async (req, res) => {
+  const { action, ...params } = req.body || {};
+  if (!action || typeof action !== 'string') {
+    return res.status(400).json({ error: 'action (string) is required' });
+  }
+  const def = CONTROL_ACTIONS[action];
+  if (!def) {
+    return res.status(404).json({
+      error: `unknown action: ${action}`,
+      hint: 'GET /api/control for the action catalog',
+    });
+  }
+  try {
+    const out = await def.run(params);
+    res.status(out.status || 200).json(out.body);
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
@@ -1894,6 +2236,93 @@ app.put('/api/tools', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Skills endpoints ────────────────────────────────────────────────────
+app.get('/api/skills', (_req, res) => {
+  res.json(listSkills());
+});
+
+// Bulk sync: client sends rows = [{ originalName, name, description }].
+// Server reconciles disk: rename folders, rewrite frontmatter, delete
+// any on-disk skills not present in the payload.
+app.put('/api/skills', (req, res) => {
+  const body = req.body;
+  if (!Array.isArray(body)) {
+    return res.status(400).json({ error: 'Body must be a JSON array of skill rows' });
+  }
+  const rows = [];
+  const seenNames = new Set();
+  for (const r of body) {
+    if (!r || typeof r !== 'object') continue;
+    const name = String(r.name || '').trim();
+    if (!name) continue;
+    if (!isValidSkillName(name)) {
+      return res.status(400).json({ error: `Invalid skill name: "${name}"` });
+    }
+    if (seenNames.has(name)) {
+      return res.status(400).json({ error: `Duplicate skill name: "${name}"` });
+    }
+    seenNames.add(name);
+    rows.push({
+      originalName: r.originalName ? String(r.originalName) : null,
+      name,
+      description: String(r.description || '').trim(),
+    });
+  }
+
+  fs.mkdirSync(skillsDir, { recursive: true });
+
+  // Apply renames first so the on-disk set matches the new names
+  for (const row of rows) {
+    if (row.originalName && row.originalName !== row.name) {
+      const ok = renameSkill(row.originalName, row.name);
+      if (!ok && fs.existsSync(path.join(skillsDir, row.originalName))) {
+        return res.status(400).json({ error: `Cannot rename "${row.originalName}" to "${row.name}"` });
+      }
+    }
+  }
+
+  // Delete on-disk skills not in payload
+  const keep = new Set(rows.map(r => r.name));
+  for (const e of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+    if (e.isDirectory() && !keep.has(e.name)) {
+      deleteSkill(e.name);
+    }
+  }
+
+  // Write/refresh frontmatter for each remaining skill
+  for (const row of rows) {
+    writeSkillFile(row.name, row.description, undefined);
+  }
+
+  res.json({ ok: true });
+});
+
+// Upload a single SKILL.md file. Body: { name?, content }. The skill name
+// is taken from explicit `name` param, else parsed from frontmatter, else
+// rejected. Companion files (references/, scripts/) must be added on disk.
+app.post('/api/skills/upload', (req, res) => {
+  const { name: explicitName, content } = req.body || {};
+  if (typeof content !== 'string' || !content.trim()) {
+    return res.status(400).json({ error: 'content (SKILL.md text) is required' });
+  }
+  const { meta, body } = parseSkillFrontmatter(content);
+  const name = String(explicitName || meta.name || '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'Skill name missing (no `name` arg and no frontmatter `name:`)' });
+  }
+  if (!isValidSkillName(name)) {
+    return res.status(400).json({ error: `Invalid skill name: "${name}"` });
+  }
+  fs.mkdirSync(skillsDir, { recursive: true });
+  const dir = path.join(skillsDir, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'SKILL.md'),
+    serializeSkillFile({ name, description: meta.description || '' }, body),
+  );
+  res.json({ ok: true, name, description: meta.description || '' });
+});
+
 async function bootstrap() {
   if (process.env.NODE_ENV === 'development') {
     const { createServer } = require('vite');
@@ -1925,7 +2354,37 @@ async function bootstrap() {
 
   // ── HTTP + WebSocket Server ─────────────────
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws/terminal' });
+  // Use noServer mode and dispatch by path manually. With multiple
+  // WebSocketServer instances bound to the same http.Server via { server, path },
+  // every WSS receives every upgrade event; the non-matching ones call
+  // abortHandshake() which writes a raw HTTP 400 onto the socket that the
+  // matching WSS has already upgraded — Chrome then reports "Invalid frame
+  // header" on the first frame after the handshake.
+  const wss = new WebSocketServer({ noServer: true });
+  const uiWss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    let pathname;
+    try {
+      pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+    } catch {
+      socket.destroy();
+      return;
+    }
+    if (pathname === '/ws/terminal') {
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    } else if (pathname === '/ws/ui') {
+      uiWss.handleUpgrade(req, socket, head, (ws) => uiWss.emit('connection', ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
+
+  uiWss.on('connection', (ws) => {
+    uiClients.add(ws);
+    ws.on('error', () => {});
+    ws.on('close', () => { uiClients.delete(ws); });
+  });
 
   wss.on('connection', (ws, req) => {
     // Extract process identifier from query: /ws/terminal?id=<idOrGuid>

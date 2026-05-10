@@ -26,6 +26,11 @@
           @pull-git="(...args) => $emit('pull-git', ...args)"
           @push-git="(...args) => $emit('push-git', ...args)"
         />
+        <GitStatusBadge
+          v-if="node?.branch"
+          :node-guid="nodeGuid"
+          style="margin-left: 6px;"
+        />
       </div>
       <CardActions
         v-if="node"
@@ -59,7 +64,7 @@
           overflow: 'hidden'
         }"
       ></div>
-      <div class="xterm-container" @mousedown="focusTerminal">
+      <div ref="xtermContainerRef" class="xterm-container" @mousedown="focusTerminal">
         <template v-if="node?.type === 'agent'">
           <div v-if="loadingChats" class="chat-empty">Loading chats…</div>
           <div v-else-if="chats.length === 0" class="chat-empty">
@@ -86,21 +91,42 @@
         />
       </div>
 
-      <div v-if="node?.type === 'agent'" class="session-side-panel">
+      <div
+        v-if="node?.type === 'agent'"
+        class="session-side-panel"
+        :class="{ collapsed: sessionPanelCollapsed }"
+      >
         <div class="session-panel-header">
-          Sessions
-          <button class="btn-ghost btn-icon" @click="fetchSessions" title="Refresh Sessions">
-            <i class="fa-solid fa-rotate"></i>
+          <template v-if="!sessionPanelCollapsed">
+            <span class="session-panel-title">Sessions</span>
+            <div class="session-panel-actions">
+              <button class="btn-ghost btn-icon" @click="fetchSessions" title="Refresh Sessions">
+                <i class="fa-solid fa-rotate"></i>
+              </button>
+              <button class="btn-ghost btn-icon" @click="sessionPanelCollapsed = true" title="Hide Sessions">
+                <i class="fa-solid fa-chevron-right"></i>
+              </button>
+            </div>
+          </template>
+          <button
+            v-else
+            class="btn-ghost btn-icon"
+            @click="sessionPanelCollapsed = false"
+            title="Show Sessions"
+          >
+            <i class="fa-solid fa-chevron-left"></i>
           </button>
         </div>
-        <div v-if="loadingSessions" class="session-loading">Loading...</div>
-        <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
-        <div v-else class="session-list">
-          <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s)">
-            <div class="session-title">{{ s.title || s.id }}</div>
-            <div class="session-time">{{ s.time }}</div>
+        <template v-if="!sessionPanelCollapsed">
+          <div v-if="loadingSessions" class="session-loading">Loading...</div>
+          <div v-else-if="sessions.length === 0" class="session-empty">No sessions found.</div>
+          <div v-else class="session-list">
+            <div v-for="s in sessions" :key="s.id" class="session-item" @click="resumeSession(s)">
+              <div class="session-title">{{ s.title || s.id }}</div>
+              <div class="session-time">{{ s.time }}</div>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
     </div>
     
@@ -132,10 +158,12 @@ import { useSessions } from '../composables/useSessions'
 import { useChats } from '../composables/useChats'
 import CardActions from './CardActions.vue'
 import GitBranchTag from './GitBranchTag.vue'
+import GitStatusBadge from './GitStatusBadge.vue'
 import BaseTerminal from './BaseTerminal.vue'
 import ChatItem from './ChatItem.vue'
 import ChatModal from './ChatModal.vue'
 import { resolveDroppedPaths, shellQuote as droppedShellQuote } from '../composables/useFileDrop'
+import { getPanelState, patchPanelState } from '../composables/usePanelState'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -169,11 +197,45 @@ const {
   sessions,
   fetchSessions,
   resumeSession
-} = useSessions(computed(() => props.node), emit, spawnChat)
+} = useSessions(computed(() => props.node), emit, spawnChat, {
+  chats,
+  getChatRef: (chatId) => chatRefs.get(chatId),
+  getInitialPtySize: estimateInitialPtySize,
+})
 
 const chatModalOpen = ref(false)
 const chatSubmitting = ref(false)
 const chatRefs = new Map()
+const xtermContainerRef = ref(null)
+const sessionPanelCollapsed = ref(getPanelState(props.node?.guid)?.sessionPanelCollapsed ?? false)
+
+watch(sessionPanelCollapsed, (v) => {
+  const guid = nodeGuid.value
+  if (guid) patchPanelState(guid, { sessionPanelCollapsed: v })
+})
+
+// Estimate the cols/rows the new chat's xterm will end up at, so the PTY
+// is spawned at the matching size. Without this, the PTY's first render
+// (e.g. claude --resume replaying the transcript) is captured at a wrong
+// width and the buffer replay garbles when xterm renders it narrower.
+function estimateInitialPtySize() {
+  const el = xtermContainerRef.value
+  if (!el) return null
+  const rect = el.getBoundingClientRect()
+  if (rect.width < 50 || rect.height < 50) return null
+  // SF Mono / Fira Code at 13px ≈ 7.8px advance, ~17px line height.
+  const CHAR_W = 7.8
+  const ROW_H = 17
+  const HEADER_H = 36   // ChatItem header
+  const PADDING = 8     // xterm internal padding (~4px each side)
+  const projectedCount = (chats.value?.length || 0) + 1
+  const perChatHeight = Math.max(rect.height / projectedCount, 200)
+  const usableHeight = perChatHeight - HEADER_H - PADDING
+  const usableWidth = rect.width - PADDING
+  const cols = Math.max(40, Math.floor(usableWidth / CHAR_W))
+  const rows = Math.max(10, Math.floor(usableHeight / ROW_H))
+  return { cols, rows }
+}
 
 function registerChatRef(chatId, el) {
   if (el) chatRefs.set(chatId, el)
@@ -187,7 +249,11 @@ function onOpenChatModal() {
 async function onChatOk(instruction) {
   chatSubmitting.value = true
   try {
-    await spawnChat(instruction)
+    const size = estimateInitialPtySize()
+    await spawnChat({
+      instruction,
+      ...(size ? { cols: size.cols, rows: size.rows } : {}),
+    })
     chatModalOpen.value = false
   } catch (err) {
     showAlert('Error', `Failed to start chat: ${err.message}`)
@@ -204,6 +270,7 @@ async function onCloseChat(chatId) {
 
 watch(nodeGuid, (guid) => {
   if (guid && props.node?.type === 'agent') {
+    sessionPanelCollapsed.value = getPanelState(guid)?.sessionPanelCollapsed ?? false
     fetchChats()
     startChatsPolling()
   } else {
@@ -408,6 +475,12 @@ function startDragTouch() {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
+  height: 100%;
+  transition: width 0.15s ease;
+}
+.session-side-panel.collapsed {
+  width: 32px;
 }
 .session-panel-header {
   padding: 8px 12px;
@@ -419,6 +492,17 @@ function startDragTouch() {
   justify-content: space-between;
   align-items: center;
 }
+.session-side-panel.collapsed .session-panel-header {
+  justify-content: center;
+  padding: 8px 4px;
+}
+.session-panel-title {
+  flex: 1;
+}
+.session-panel-actions {
+  display: flex;
+  gap: 2px;
+}
 .session-loading, .session-empty {
   padding: 12px;
   text-align: center;
@@ -427,6 +511,7 @@ function startDragTouch() {
 }
 .session-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 .session-item {

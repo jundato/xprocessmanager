@@ -1,5 +1,5 @@
 <template>
-  <div v-if="show" class="modal-overlay" @mousedown.self="overlayDown = true" @click.self="onOverlayClick">
+  <div v-if="show" class="modal-overlay chat-modal-overlay" @mousedown.self="overlayDown = true" @click.self="onOverlayClick">
     <div class="modal chat-modal" @keydown.esc="$emit('cancel')">
       <div class="modal-header">
         <h2>New chat</h2>
@@ -59,6 +59,9 @@ function onOverlayClick() {
 </script>
 
 <style scoped>
+.chat-modal-overlay {
+  z-index: 100;
+}
 .chat-modal {
   width: 520px;
   max-width: 90vw;

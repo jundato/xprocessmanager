@@ -34,8 +34,55 @@
             ></div>
           </div>
         </div>
+        <!-- Edge Detail Panel (Right Side) -->
+        <div v-if="edgeDetail.visible" class="mermaid-edge-detail" style="width: 300px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-dark); padding: 16px; overflow-y: auto;">
+          <div style="display: flex; align-items: center; margin-bottom: 12px;">
+            <i class="fa-solid fa-arrow-right-long" style="margin-right: 8px; color: var(--yellow)"></i>
+            <div style="flex: 1; min-width: 0;">
+              <span style="font-weight: bold; font-size: 13px; display: block;">Transition</span>
+              <span style="font-size: 10px; color: var(--text-dim);">{{ edgeDetail.from }} {{ edgeDetail.arrow }} {{ edgeDetail.to }}</span>
+            </div>
+            <button class="btn-ghost" style="margin-left: 8px; padding: 2px 8px; font-size: 11px; flex-shrink: 0;" @click="edgeDetail.visible = false"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">Label</label>
+              <input v-model="edgeDetail.text" class="workspace-search-input" style="padding: 6px 8px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text)" placeholder="(no label)" @keydown.enter="applyEdgeEdit" />
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">Arrow</label>
+              <select v-model="edgeDetail.arrow" style="padding: 6px 8px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer;">
+                <option value="--&gt;">Solid (--&gt;)</option>
+                <option value="-.-&gt;">Dotted (-.-&gt;)</option>
+                <option value="==&gt;">Thick (==&gt;)</option>
+                <option value="---">Open (---)</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">From</label>
+              <select v-model="edgeDetail.from" style="padding: 6px 8px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer;">
+                <option v-for="n in availableNodes" :key="n.id" :value="n.id">{{ n.label || n.id }}</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">To</label>
+              <select v-model="edgeDetail.to" style="padding: 6px 8px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer;">
+                <option v-for="n in availableNodes" :key="n.id" :value="n.id">{{ n.label || n.id }}</option>
+              </select>
+            </div>
+
+            <div style="display: flex; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px;">
+              <button class="btn-start" style="padding: 5px 12px; font-size: 12px;" @click="applyEdgeEdit">
+                <i class="fa-solid fa-check" style="margin-right: 4px"></i>Apply
+              </button>
+              <button class="btn-ghost" style="padding: 5px 12px; font-size: 12px; color: var(--red);" @click="deleteEdgeFromPanel">
+                <i class="fa-solid fa-trash" style="margin-right: 4px"></i>Delete
+              </button>
+            </div>
+          </div>
+        </div>
         <!-- Node Detail Panel (Right Side) -->
-        <div v-if="nodeDetail.visible" class="mermaid-node-detail" style="width: 300px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-dark); padding: 16px; overflow-y: auto;">
+        <div v-if="nodeDetail.visible && !edgeDetail.visible" class="mermaid-node-detail" style="width: 300px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--bg-dark); padding: 16px; overflow-y: auto;">
           <div style="display: flex; align-items: center; margin-bottom: 12px;">
             <i class="fa-solid fa-circle-nodes" style="margin-right: 8px; color: var(--cyan)"></i>
             <div style="flex: 1; min-width: 0;">
@@ -302,21 +349,26 @@ function extractLabel(defStr, shape) {
 function parseMermaidNodes(code) {
   const lines = code.split('\n')
   const nodes = {} // id -> { id, label, shape, defStr }
-  const connections = [] // { from, to, arrow, text }
+  const connections = [] // { from, to, arrow, text, lineIndex }
 
   const arrowPatterns = [
-    { regex: /^\s*(\w+)\s*(-->\.>)\s*(\w+)/, arrow: '-->.' },
-    { regex: /^\s*(\w+)\s*(==>)\s*(\w+)/, arrow: '==>' },
-    { regex: /^\s*(\w+)\s*(-.->)\s*(\w+)/, arrow: '-.->' },
-    { regex: /^\s*(\w+)\s*--\s*"?([^"\|]+?)"?\s*-->\s*(\w+)/, arrow: '-->', hasText: true },
+    // Labeled (more specific first)
     { regex: /^\s*(\w+)\s*-->\s*\|([^|]+)\|\s*(\w+)/, arrow: '-->', hasText: true, textGroup: 2, toGroup: 3 },
+    { regex: /^\s*(\w+)\s*==>\s*\|([^|]+)\|\s*(\w+)/, arrow: '==>', hasText: true, textGroup: 2, toGroup: 3 },
+    { regex: /^\s*(\w+)\s*-\.->\s*\|([^|]+)\|\s*(\w+)/, arrow: '-.->', hasText: true, textGroup: 2, toGroup: 3 },
+    { regex: /^\s*(\w+)\s*--\s*"?([^"\|]+?)"?\s*-->\s*(\w+)/, arrow: '-->', hasText: true },
+    { regex: /^\s*(\w+)\s*-\.\s*([^.]+?)\s*\.->\s*(\w+)/, arrow: '-.->', hasText: true, textGroup: 2, toGroup: 3 },
+    { regex: /^\s*(\w+)\s*==\s*([^=]+?)\s*==>\s*(\w+)/, arrow: '==>', hasText: true, textGroup: 2, toGroup: 3 },
+    // Bare
+    { regex: /^\s*(\w+)\s*(==>)\s*(\w+)/, arrow: '==>' },
+    { regex: /^\s*(\w+)\s*(-\.->)\s*(\w+)/, arrow: '-.->' },
     { regex: /^\s*(\w+)\s*(-->)\s*(\w+)/, arrow: '-->' },
     { regex: /^\s*(\w+)\s*(---)\s*(\w+)/, arrow: '---' },
   ]
 
-  for (const line of lines) {
+  lines.forEach((line, i) => {
     const trimmed = line.trim()
-    if (!trimmed || /^(graph|flowchart|subgraph|end|%%|classDef|class |style )/.test(trimmed)) continue
+    if (!trimmed || /^(graph|flowchart|subgraph|end|%%|classDef|class |style )/.test(trimmed)) return
 
     let foundConnection = false
     for (const pat of arrowPatterns) {
@@ -331,7 +383,7 @@ function parseMermaidNodes(code) {
           from = m[1]
           to = m[3]
         }
-        connections.push({ from, to, arrow: pat.arrow, text })
+        connections.push({ from, to, arrow: pat.arrow, text: text || '', lineIndex: i })
         const fullPartsRe = /(\w+)(\[.*?\]|\(.*?\)|\{.*?\})?/g
         let pm
         while ((pm = fullPartsRe.exec(trimmed)) !== null) {
@@ -344,16 +396,16 @@ function parseMermaidNodes(code) {
         break
       }
     }
-    if (foundConnection) continue
+    if (foundConnection) return
 
-    const nodeDefMatch = trimmed.match(/^(\w+)(\[\[.*?\]\]|\[\(.*?\)\]|\(\[.*?\]\)|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\]|\(.*?\)|\{.*?\})\s*$/)
+    const nodeDefMatch = trimmed.match(/^(\w+)(\[\[.*?\]\]|\[\(.*?\)\]|\(\[.*?\]\)|\(\(.*?\)\)|\{\{.*?\}\}|\[.*?\]|\(.*?\)|\{.*?\})\s*(?::::\w+)?\s*$/)
     if (nodeDefMatch) {
       const id = nodeDefMatch[1]
       const defStr = nodeDefMatch[2]
       const shape = detectShape(defStr)
       nodes[id] = { id, label: extractLabel(defStr, shape), shape, defStr }
     }
-  }
+  })
 
   return { nodes, connections }
 }
@@ -363,6 +415,7 @@ function handleNodeClick(nodeId) {
   const node = nodes[nodeId]
   const relatedConns = connections.filter(c => c.from === nodeId || c.to === nodeId)
 
+  edgeDetail.value.visible = false
   nodeDetail.value = {
     visible: true,
     id: nodeId,
@@ -372,6 +425,72 @@ function handleNodeClick(nodeId) {
     originalShape: node ? node.shape : 'rect',
     connections: relatedConns,
   }
+}
+
+// ── Edge Detail Panel State ─────────────────
+const edgeDetail = ref({
+  visible: false,
+  index: -1,
+  lineIndex: -1,
+  from: '',
+  to: '',
+  text: '',
+  arrow: '-->',
+})
+
+function handleEdgeClick(edgeIndex) {
+  const { connections } = parseMermaidNodes(mermaidEditorCode.value)
+  const conn = connections[edgeIndex]
+  if (!conn) return
+
+  nodeDetail.value.visible = false
+  edgeDetail.value = {
+    visible: true,
+    index: edgeIndex,
+    lineIndex: conn.lineIndex,
+    from: conn.from,
+    to: conn.to,
+    text: conn.text || '',
+    arrow: conn.arrow,
+  }
+}
+
+function buildEdgeLine(from, to, arrow, text) {
+  const t = (text || '').trim()
+  switch (arrow) {
+    case '-.->':
+      return t ? `${from} -.${t}.-> ${to}` : `${from} -.-> ${to}`
+    case '==>':
+      return t ? `${from} ==${t}==> ${to}` : `${from} ==> ${to}`
+    case '---':
+      return `${from} --- ${to}`
+    case '-->':
+    default:
+      return t ? `${from} -->|${t}| ${to}` : `${from} --> ${to}`
+  }
+}
+
+function applyEdgeEdit() {
+  const e = edgeDetail.value
+  if (!e.visible || e.lineIndex < 0) return
+  const lines = mermaidEditorCode.value.split('\n')
+  if (e.lineIndex >= lines.length) return
+  const orig = lines[e.lineIndex]
+  const indent = (orig.match(/^(\s*)/) || ['', ''])[1]
+  lines[e.lineIndex] = indent + buildEdgeLine(e.from, e.to, e.arrow, e.text)
+  mermaidEditorCode.value = lines.join('\n')
+  updateMermaidLivePreview()
+}
+
+function deleteEdgeFromPanel() {
+  const e = edgeDetail.value
+  if (!e.visible || e.lineIndex < 0) return
+  const lines = mermaidEditorCode.value.split('\n')
+  if (e.lineIndex >= lines.length) return
+  lines.splice(e.lineIndex, 1)
+  mermaidEditorCode.value = lines.join('\n')
+  edgeDetail.value.visible = false
+  updateMermaidLivePreview()
 }
 
 function applyNodeEdit() {
@@ -512,6 +631,97 @@ function attachNodeClickHandlers(containerEl) {
   })
 }
 
+// Mermaid v11 stamps each edge with data-id="L_<from>_<to>_<index>" — on the
+// path element, and on the inner g.label inside each g.edgeLabel container.
+// Node IDs may contain underscores, so we resolve the split against the parser's
+// known node IDs rather than greedy regex.
+function parseMermaidEdgeId(edgeId, nodeIds) {
+  if (!edgeId || !edgeId.startsWith('L_')) return null
+  const rest = edgeId.slice(2)
+  const tail = rest.match(/^(.+)_(\d+)$/)
+  if (!tail) return null
+  const head = tail[1]
+  const index = parseInt(tail[2], 10)
+  for (const fromId of nodeIds) {
+    if (head.length > fromId.length + 1 && head.startsWith(fromId + '_')) {
+      const toId = head.slice(fromId.length + 1)
+      if (nodeIds.includes(toId)) return { from: fromId, to: toId, index }
+    }
+  }
+  return null
+}
+
+function findConnByEndpoints(from, to, edgeIndex, connections) {
+  let occ = 0
+  for (let i = 0; i < connections.length; i++) {
+    const c = connections[i]
+    if (c.from === from && c.to === to) {
+      if (occ === edgeIndex) return i
+      occ++
+    }
+  }
+  return -1
+}
+
+function attachEdgeClickHandlers(containerEl) {
+  if (!containerEl) return
+  const svgEl = containerEl.querySelector('svg')
+  if (!svgEl) return
+
+  const { nodes, connections } = parseMermaidNodes(mermaidEditorCode.value)
+  const nodeIds = Object.keys(nodes)
+  // include endpoints that only appear in connections (no defined node block)
+  connections.forEach(c => {
+    if (!nodeIds.includes(c.from)) nodeIds.push(c.from)
+    if (!nodeIds.includes(c.to)) nodeIds.push(c.to)
+  })
+
+  function resolveConnIdx(dataId) {
+    const ep = parseMermaidEdgeId(dataId, nodeIds)
+    if (!ep) return -1
+    return findConnByEndpoints(ep.from, ep.to, ep.index, connections)
+  }
+
+  // Edge labels: outer g.edgeLabel is a direct child of g.edgeLabels. Inside it,
+  // an inner g.label carries data-id. Attach to the OUTER g only (so we don't
+  // double-bind to the inner span.edgeLabel that also exists in the foreignObject).
+  const labelEls = svgEl.querySelectorAll('g.edgeLabels > g.edgeLabel')
+  labelEls.forEach((labelEl) => {
+    const inner = labelEl.querySelector('g.label[data-id]')
+    const dataId = inner ? inner.getAttribute('data-id') : null
+    const connIdx = resolveConnIdx(dataId)
+    labelEl.style.cursor = 'pointer'
+    labelEl.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (connIdx >= 0) handleEdgeClick(connIdx)
+    })
+    labelEl.addEventListener('mouseenter', () => {
+      labelEl.style.filter = 'brightness(1.3) drop-shadow(0 0 6px rgba(96, 165, 250, 0.5))'
+    })
+    labelEl.addEventListener('mouseleave', () => {
+      labelEl.style.filter = ''
+    })
+  })
+
+  // Edge paths: each <path> has data-id="L_<from>_<to>_<idx>".
+  const pathEls = svgEl.querySelectorAll('g.edgePaths > path[data-id], g.edgePaths path[data-id], .edgePaths .path[data-id]')
+  pathEls.forEach((pathEl) => {
+    const connIdx = resolveConnIdx(pathEl.getAttribute('data-id'))
+    pathEl.style.cursor = 'pointer'
+    pathEl.style.pointerEvents = 'stroke'
+    pathEl.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (connIdx >= 0) handleEdgeClick(connIdx)
+    })
+    pathEl.addEventListener('mouseenter', () => {
+      pathEl.style.filter = 'drop-shadow(0 0 4px rgba(96, 165, 250, 0.8))'
+    })
+    pathEl.addEventListener('mouseleave', () => {
+      pathEl.style.filter = ''
+    })
+  })
+}
+
 async function updateMermaidLivePreview(isInitialLoad = false) {
   if (!mermaidEditorCode.value) { mermaidLiveSvg.value = ''; mermaidLiveError.value = null; return }
   try {
@@ -538,7 +748,8 @@ async function updateMermaidLivePreview(isInitialLoad = false) {
     }
     
     attachNodeClickHandlers(mermaidEditorPreviewRef.value)
-    
+    attachEdgeClickHandlers(mermaidEditorPreviewRef.value)
+
     if (isInitialLoad === true) {
       setTimeout(() => fitDiagramToScreen(), 50)
     }
@@ -561,6 +772,7 @@ watch(() => props.initialCode, (newVal) => {
   diagramPanX.value = 0
   diagramPanY.value = 0
   nodeDetail.value.visible = false
+  edgeDetail.value.visible = false
   updateMermaidLivePreview(true)
 }, { immediate: true })
 </script>

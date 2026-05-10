@@ -2,16 +2,23 @@
   <div
     ref="cardRef"
     class="card"
-    :class="{ selected: isSelected, expanded, stopped: node.status !== 'running' }"
+    :class="{ selected: isSelected, expanded, stopped: !effectiveRunning }"
     :style="{ borderColor, '--card-color': borderColor }"
     @click="$emit('select', node.guid)"
     @mouseenter="$emit('hover-enter', node.guid, $event.currentTarget, expanded, node.command, node)"
     @mouseleave="!expanded && $emit('hover-leave', node.guid)"
   >
     <div class="card-name-badge">
-      <i :class="[typeIcon, 'node-type-icon', node.status]" :title="node.type"></i>
+      <i :class="[typeIcon, 'node-type-icon', effectiveStatus]" :title="node.type"></i>
       {{ node.name }}
       <i v-if="node.type === 'script' && node.status === 'running'" class="fa-solid fa-spinner script-running-spinner" title="Running..."></i>
+      <span
+        v-if="node.type === 'agent' && node.chatCount > 0"
+        class="agent-chat-count"
+        :title="`${node.chatCount} active chat${node.chatCount === 1 ? '' : 's'}`"
+      >
+        <i class="fa-solid fa-comment-dots"></i>{{ node.chatCount }}
+      </span>
     </div>
     <div class="card-header">
       <div class="card-header-left">
@@ -87,6 +94,19 @@ const TYPE_ICONS = {
 }
 
 const typeIcon = computed(() => TYPE_ICONS[props.node.type] || 'fa-solid fa-circle')
+
+const effectiveRunning = computed(() => {
+  if (props.node.status === 'running') return true
+  if (props.node.type === 'agent' && (props.node.chatCount || 0) > 0) return true
+  return false
+})
+
+const effectiveStatus = computed(() => {
+  if (props.node.type === 'agent' && props.node.status !== 'running' && (props.node.chatCount || 0) > 0) {
+    return 'running'
+  }
+  return props.node.status
+})
 
 const agentTag = computed(() => {
   if (props.node.type !== 'agent') return null

@@ -3,7 +3,7 @@ import { api } from './useApi'
 import { useAlert } from './useAlert'
 import cliInfo from '../../cli.info.json'
 
-export function useSessions(node, emit, spawnChat) {
+export function useSessions(node, emit, spawnChat, { chats, getChatRef, getInitialPtySize } = {}) {
   const { showAlert } = useAlert()
   const showSessions = ref(false)
   const loadingSessions = ref(false)
@@ -41,11 +41,20 @@ export function useSessions(node, emit, spawnChat) {
       showAlert('Error', 'Chat spawning is unavailable.')
       return
     }
+    const existing = chats?.value?.find((c) => c.resumeId === session.id)
+    if (existing) {
+      const ref = getChatRef?.(existing.chatId)
+      ref?.expand?.()
+      ref?.focus?.()
+      showSessions.value = false
+      return
+    }
     try {
+      const size = getInitialPtySize?.()
       await spawnChat({
-        instruction: 'continue',
         resumeId: session.id,
         title: session.title || null,
+        ...(size ? { cols: size.cols, rows: size.rows } : {}),
       })
       showSessions.value = false
     } catch (err) {

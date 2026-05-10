@@ -18,6 +18,11 @@
           :class="{ active: activeTab === 'tools' }"
           @click="activeTab = 'tools'"
         >Tools</button>
+        <button
+          class="settings-tab"
+          :class="{ active: activeTab === 'skills' }"
+          @click="activeTab = 'skills'"
+        >Skills</button>
       </div>
       <div class="modal-scroll">
         <!-- General Tab -->
@@ -217,6 +222,39 @@
             <button type="button" class="btn-add-row" @click="emit('add-tool')">+ Add Tool</button>
           </div>
         </div>
+
+        <!-- Skills Tab -->
+        <div class="settings-tab-content" :class="{ active: activeTab === 'skills' }">
+          <div class="settings-section" style="margin-top: 0; padding-top: 0; border-top: none">
+            <div class="settings-section-title">Skills</div>
+            <div class="env-note">
+              Reusable instruction packs stored as folders under <code>skills/&lt;name&gt;/SKILL.md</code>.
+              When a chat starts, selected skills are copied into the node's working directory at
+              <code>.nexus/skills/</code> (see <code>cli-unification.md</code>). Edit the body on disk
+              or upload a prepared <code>SKILL.md</code> below.
+            </div>
+            <div class="env-rows">
+              <div v-for="(row, i) in skillRows" :key="i" class="env-row">
+                <input v-model="row.name" type="text" class="env-key" placeholder="skill-name" />
+                <input v-model="row.description" type="text" class="env-val" placeholder="One-line description (used to decide relevance)" />
+                <button type="button" class="btn-remove-row" @click="emit('remove-skill', i)">&times;</button>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn-add-row" style="margin: 0; flex: 0 0 auto" @click="emit('add-skill')">+ Add skill</button>
+              <button type="button" class="btn-ghost" @click="triggerSkillUpload">
+                <i class="fa-solid fa-upload"></i> Upload SKILL.md…
+              </button>
+              <input
+                ref="skillUploadRef"
+                type="file"
+                accept=".md,text/markdown"
+                style="display: none"
+                @change="onSkillUploadFile"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-actions">
@@ -263,6 +301,7 @@ defineProps({
   envRows: { type: Array, default: () => [] },
   groupRows: { type: Array, default: () => [] },
   toolRows: { type: Array, default: () => [] },
+  skillRows: { type: Array, default: () => [] },
   logPollInterval: { type: Number, default: 500 },
   statusPollInterval: { type: Number, default: 3000 },
   popoverPollInterval: { type: Number, default: 1500 },
@@ -276,6 +315,7 @@ const emit = defineEmits([
   'add-env', 'remove-env',
   'add-group', 'remove-group',
   'add-tool', 'remove-tool', 'browse-tool',
+  'add-skill', 'remove-skill', 'upload-skill',
   'reorder-groups',
   'import',
   'update:logPollInterval', 'update:statusPollInterval', 'update:popoverPollInterval',
@@ -291,6 +331,17 @@ function handleOverlayClick() {
 const activeTab = ref('general')
 const configToolIndex = ref(null)
 const importFileRef = ref(null)
+const skillUploadRef = ref(null)
+
+function triggerSkillUpload() {
+  skillUploadRef.value?.click()
+}
+
+function onSkillUploadFile(e) {
+  const file = e.target.files[0]
+  e.target.value = ''
+  if (file) emit('upload-skill', file)
+}
 
 // ── Group drag-and-drop ──────────────────
 const dragIndex = ref(null)

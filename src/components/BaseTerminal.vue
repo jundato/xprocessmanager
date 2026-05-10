@@ -19,6 +19,7 @@ const containerRef = ref(null)
 let term = null
 let fitAddon = null
 let resizeObserver = null
+let fitTimer = null
 
 const defaultTheme = {
   background: '#0f1117',
@@ -74,6 +75,12 @@ function initTerminal() {
 
 function fit() {
   if (!fitAddon || !term || !term.element) return
+  const el = containerRef.value
+  if (!el) return
+  // Skip when hidden/collapsed — fitting against a 0×0 container collapses
+  // the PTY to a minimum size and forces TUIs to re-render at that width.
+  const rect = el.getBoundingClientRect()
+  if (rect.width < 20 || rect.height < 20) return
   try {
     fitAddon.fit()
   } catch (e) {
@@ -81,9 +88,17 @@ function fit() {
   }
 }
 
+function scheduleFit() {
+  // Coalesce ResizeObserver bursts during expand/collapse animations so the
+  // PTY isn't resized every animation frame (which would make the agent
+  // redraw repeatedly at intermediate widths).
+  if (fitTimer) clearTimeout(fitTimer)
+  fitTimer = setTimeout(() => { fitTimer = null; fit() }, 80)
+}
+
 function setupResizeObserver() {
   if (resizeObserver) resizeObserver.disconnect()
-  resizeObserver = new ResizeObserver(() => fit())
+  resizeObserver = new ResizeObserver(() => scheduleFit())
   if (containerRef.value) resizeObserver.observe(containerRef.value)
 }
 
@@ -92,6 +107,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (fitTimer) { clearTimeout(fitTimer); fitTimer = null }
   if (resizeObserver) resizeObserver.disconnect()
   if (term) term.dispose()
 })

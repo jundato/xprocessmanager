@@ -442,6 +442,25 @@ button:active {
   opacity: 0.8;
 }
 
+.agent-chat-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--green);
+  background: color-mix(in srgb, var(--green), transparent 85%);
+  border: 1px solid color-mix(in srgb, var(--green), transparent 60%);
+  border-radius: 8px;
+}
+
+.agent-chat-count i {
+  font-size: 9px;
+}
+
 @keyframes pulse-red {
   0% {
     filter: drop-shadow(0 0 2px var(--red));
@@ -1944,6 +1963,36 @@ button:active {
   font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
+.workspace-row-delete {
+  opacity: 0;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  transition: opacity 0.1s, color 0.1s;
+}
+
+.workspace-file-item:hover .workspace-row-delete {
+  opacity: 1;
+}
+
+.workspace-row-delete:hover {
+  color: var(--red);
+}
+
+.workspace-row-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workspace-bulk-delete {
+  margin-left: 8px;
+  color: var(--red);
+}
+
+.workspace-bulk-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .file-icon-dir {
   color: var(--yellow);
 }
@@ -2512,7 +2561,6 @@ button:active {
 }
 
 .session-list {
-  max-height: 300px;
   overflow-y: auto;
 }
 

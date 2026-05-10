@@ -150,6 +150,7 @@
 
   <Teleport v-if="workspaceDocked && workspaceModalIsAgent" defer to="#node-panel-workspace">
     <WorkspaceModal
+      ref="workspaceModalRef"
       :show="workspaceModalStore.show"
       :node-name="workspaceModalStore.nodeName"
       :node-guid="workspaceModalStore.nodeGuid"
@@ -158,6 +159,8 @@
       :log-panel-height="effectivePanelHeight"
       :initial-file="workspaceModalStore.initialFile"
       :initial-line="workspaceModalStore.initialLine"
+      :initial-column="workspaceModalStore.initialColumn"
+      :initial-scroll-top="workspaceModalStore.initialScrollTop"
       :docked="true"
       :docked-width="logStore.dockedWorkspaceWidth.value"
       :docked-height="effectivePanelHeight"
@@ -168,6 +171,7 @@
   </Teleport>
   <WorkspaceModal
     v-else
+    ref="workspaceModalRef"
     :show="workspaceModalStore.show"
     :node-name="workspaceModalStore.nodeName"
     :node-guid="workspaceModalStore.nodeGuid"
@@ -176,6 +180,8 @@
     :log-panel-height="effectivePanelHeight"
     :initial-file="workspaceModalStore.initialFile"
     :initial-line="workspaceModalStore.initialLine"
+    :initial-column="workspaceModalStore.initialColumn"
+    :initial-scroll-top="workspaceModalStore.initialScrollTop"
     :docked="false"
     :docked-width="logStore.dockedWorkspaceWidth.value"
     :docked-height="effectivePanelHeight"
@@ -184,6 +190,7 @@
     @start-node="handleStart"
   />
   <AlertModal />
+  <ConfirmModal />
   <NotificationHistoryModal :show="showNotificationHistory" @close="showNotificationHistory = false" />
   <NotificationContainer />
   <TaskOverlay />
@@ -195,6 +202,7 @@
     :env-rows="settingsStore.envRows.value"
     :group-rows="settingsStore.groupRows.value"
     :tool-rows="settingsStore.toolRows.value"
+    :skill-rows="settingsStore.skillRows.value"
     v-model:log-poll-interval="settingsStore.sysLogPollInterval.value"
     v-model:status-poll-interval="settingsStore.sysStatusPollInterval.value"
     v-model:popover-poll-interval="settingsStore.sysPopoverPollInterval.value"
@@ -210,6 +218,9 @@
     @add-tool="settingsStore.addToolRow"
     @remove-tool="settingsStore.removeToolRow"
     @browse-tool="settingsStore.browseFile"
+    @add-skill="settingsStore.addSkillRow"
+    @remove-skill="settingsStore.removeSkillRow"
+    @upload-skill="settingsStore.uploadSkill"
     @reorder-groups="settingsStore.reorderGroups"
     @import="handleImport"
   />
@@ -227,6 +238,7 @@ import NodeModal from './components/NodeModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import BranchModal from './components/BranchModal.vue'
 import AlertModal from './components/AlertModal.vue'
+import ConfirmModal from './components/ConfirmModal.vue'
 import NotificationHistoryModal from './components/NotificationHistoryModal.vue'
 import NotificationContainer from './components/NotificationContainer.vue'
 import TaskOverlay from './components/TaskOverlay.vue'
@@ -239,6 +251,7 @@ import { useSettings } from './composables/useSettings.js'
 import { useAlert } from './composables/useAlert.js'
 import { useNotifications } from './composables/useNotifications.js'
 import { api } from './composables/useApi.js'
+import { getPanelState, patchPanelState } from './composables/usePanelState.js'
 
 
 
@@ -607,12 +620,15 @@ async function handleCheckAllRemote() {
 }
 
 // ── Workspace Modal ─────────────────────────
+const workspaceModalRef = ref(null)
 const workspaceModalStore = reactive({
   show: false,
   nodeGuid: null,
   nodeName: null,
   initialFile: null,
   initialLine: null,
+  initialColumn: null,
+  initialScrollTop: null,
 })
 
 const workspaceModalStatus = computed(() => {
@@ -638,13 +654,17 @@ function openWorkspaceModal(nodeOrGuid, initialFile = null, initialLine = null) 
     workspaceModalStore.nodeName = null
     workspaceModalStore.initialFile = null
     workspaceModalStore.initialLine = null
+    workspaceModalStore.initialColumn = null
+    workspaceModalStore.initialScrollTop = null
     return
   }
-  
+
   workspaceModalStore.nodeGuid = guid
   workspaceModalStore.nodeName = name
   workspaceModalStore.initialFile = initialFile
   workspaceModalStore.initialLine = initialLine
+  workspaceModalStore.initialColumn = null
+  workspaceModalStore.initialScrollTop = null
   workspaceModalStore.show = true
   
   const node = typeof nodeOrGuid === 'object' ? nodeOrGuid : nodeStore.nodes.value.find(n => n.guid === guid)
@@ -662,6 +682,8 @@ function closeWorkspaceModal() {
   workspaceModalStore.nodeName = null
   workspaceModalStore.initialFile = null
   workspaceModalStore.initialLine = null
+  workspaceModalStore.initialColumn = null
+  workspaceModalStore.initialScrollTop = null
 }
 
 // Workspace docks alongside the footer panel when the same node is open
@@ -694,22 +716,65 @@ const selectedNodeObject = computed(() => {
   return nodeStore.nodes.value.find(n => n.guid === logStore.selectedNode.value) || null
 })
 
+function snapshotPanelStateFor(guid) {
+  if (!guid) return
+  const wasWorkspaceOpen = workspaceModalStore.show && workspaceModalStore.nodeGuid === guid
+  const snap = wasWorkspaceOpen && workspaceModalRef.value?.snapshot
+    ? workspaceModalRef.value.snapshot()
+    : null
+  patchPanelState(guid, {
+    workspaceOpen: wasWorkspaceOpen,
+    workspaceFile: snap?.file ?? null,
+    workspaceLine: snap?.line ?? null,
+    workspaceColumn: snap?.column ?? null,
+    workspaceScrollTop: snap?.scrollTop ?? null,
+  })
+}
+
+function restorePanelStateFor(guid) {
+  if (!guid) return
+  const saved = getPanelState(guid)
+  if (!saved?.workspaceOpen) return
+  // Don't override if workspace already open for this node (e.g. opened via card button).
+  if (workspaceModalStore.show && workspaceModalStore.nodeGuid === guid) return
+  const node = nodeStore.nodes.value.find(n => n.guid === guid)
+  if (!node) return
+  workspaceModalStore.nodeGuid = guid
+  workspaceModalStore.nodeName = node.name
+  workspaceModalStore.initialFile = saved.workspaceFile || null
+  workspaceModalStore.initialLine = saved.workspaceLine || null
+  workspaceModalStore.initialColumn = saved.workspaceColumn || null
+  workspaceModalStore.initialScrollTop = saved.workspaceScrollTop ?? null
+  workspaceModalStore.show = true
+}
+
 function handleSelectLog(nodeOrGuid) {
   const guid = typeof nodeOrGuid === 'object' ? nodeOrGuid.guid : nodeOrGuid
   popoverStore.hideLogPopover()
+  // Snapshot the previously-selected node's panel state before switching/toggling.
+  const prevGuid = logStore.selectedNode.value
+  if (prevGuid) snapshotPanelStateFor(prevGuid)
   logStore.selectLog(guid)
+  if (logStore.selectedNode.value === guid) {
+    nextTick(() => restorePanelStateFor(guid))
+  }
 }
 
 function handleCloseLog() {
   const closedGuid = logStore.selectedNode.value
+  snapshotPanelStateFor(closedGuid)
   logStore.closeLog()
-  
+
   if (workspaceModalStore.show && workspaceModalStore.nodeGuid === closedGuid) {
     const node = nodeStore.nodes.value.find(n => n.guid === closedGuid)
     if (node?.type === 'agent') {
       workspaceModalStore.show = false
       workspaceModalStore.nodeGuid = null
       workspaceModalStore.nodeName = null
+      workspaceModalStore.initialFile = null
+      workspaceModalStore.initialLine = null
+      workspaceModalStore.initialColumn = null
+      workspaceModalStore.initialScrollTop = null
     }
   }
 }
@@ -801,6 +866,38 @@ function onGlobalDrop(ev) {
   if (!ev.defaultPrevented) ev.preventDefault()
 }
 
+// ── Control-channel WebSocket ──────────────
+// Listens for messages broadcast by POST /api/control (ui.notify, ui.focus, ...).
+// Auto-reconnects with backoff so the channel survives server restarts.
+let controlWs = null
+let controlReconnectTimer = null
+let controlReconnectDelay = 1000
+
+function connectControlWs() {
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    controlWs = new WebSocket(`${proto}//${location.host}/ws/ui`)
+    controlWs.onopen = () => { controlReconnectDelay = 1000 }
+    controlWs.onmessage = (ev) => {
+      let msg
+      try { msg = JSON.parse(ev.data) } catch { return }
+      if (msg.kind === 'notify') {
+        addNotification(msg.message, msg.type || 'info', msg.duration ?? 3000)
+      } else if (msg.kind === 'focus') {
+        const guid = msg.guid || nodeStore.nodes.value.find(n => n.name === msg.name)?.guid
+        if (guid && logStore.selectedNode.value !== guid) handleSelectLog(guid)
+      }
+    }
+    controlWs.onclose = () => {
+      controlReconnectTimer = setTimeout(connectControlWs, controlReconnectDelay)
+      controlReconnectDelay = Math.min(controlReconnectDelay * 2, 30000)
+    }
+    controlWs.onerror = () => { try { controlWs.close() } catch {} }
+  } catch {
+    controlReconnectTimer = setTimeout(connectControlWs, controlReconnectDelay)
+  }
+}
+
 // ── Lifecycle ───────────────────────────────
 onMounted(async () => {
   await nodeStore.refresh()
@@ -808,6 +905,7 @@ onMounted(async () => {
   window.addEventListener('resize', onResize)
   document.addEventListener('dragover', onGlobalDragOver)
   document.addEventListener('drop', onGlobalDrop)
+  connectControlWs()
 })
 
 onUnmounted(() => {
@@ -816,5 +914,7 @@ onUnmounted(() => {
   document.removeEventListener('drop', onGlobalDrop)
   nodeStore.stopPolling()
   logStore.stopLogPolling()
+  if (controlReconnectTimer) clearTimeout(controlReconnectTimer)
+  if (controlWs) { try { controlWs.close() } catch {} }
 })
 </script>

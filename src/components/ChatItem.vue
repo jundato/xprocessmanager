@@ -3,7 +3,7 @@
     { collapsed: !expanded },
     chat.status === 'errored' ? 'has-errored'
       : chat.status === 'stopped' ? 'has-stopped'
-      : chat.needsInput ? 'has-needs-input'
+      : (chat.needsInput && !focused) ? 'has-needs-input'
       : 'has-thinking'
   ]">
     <div class="chat-item-header" @click="expanded = !expanded">
@@ -15,20 +15,27 @@
       <span v-else-if="chat.status === 'stopped'" class="chat-status stopped" title="Stopped">
         <i class="fa-solid fa-circle-stop"></i>
       </span>
-      <span v-else-if="chat.needsInput" class="chat-status needs-input" title="Awaiting input">
-        <i class="fa-solid fa-keyboard"></i>
-      </span>
-      <span v-else class="chat-status thinking" title="Thinking">
-        <i class="fa-solid fa-spinner fa-spin"></i>
-      </span>
+      <template v-else-if="!focused">
+        <span v-if="chat.needsInput" class="chat-status needs-input" title="Awaiting input">
+          <i class="fa-solid fa-keyboard"></i>
+        </span>
+        <span v-else class="chat-status thinking" title="Thinking">
+          <i class="fa-solid fa-spinner fa-spin"></i>
+        </span>
+      </template>
+      <button class="chat-refresh" @click.stop="refresh" title="Refit terminal & redraw">
+        <i class="fa-solid fa-arrows-rotate"></i>
+      </button>
       <button class="chat-close" @click.stop="$emit('close', chat.chatId)" title="Close chat">
         <i class="fa-solid fa-xmark"></i>
       </button>
     </div>
     <div
-      v-show="expanded"
       class="chat-item-body"
       :class="{ 'drag-over': dragOver }"
+      :aria-hidden="!expanded"
+      @focusin="focused = true"
+      @focusout="focused = false"
       @dragenter.stop.prevent="onDragEnter"
       @dragover.stop.prevent="onDragOver"
       @dragleave.stop.prevent="onDragLeave"
@@ -53,13 +60,23 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import BaseTerminal from './BaseTerminal.vue'
 import { resolveDroppedPaths, shellQuote } from '../composables/useFileDrop'
+import { getPanelState, patchPanelState } from '../composables/usePanelState'
 
 const props = defineProps({
   chat: { type: Object, required: true },
 })
 const emit = defineEmits(['close'])
 
-const expanded = ref(true)
+const parentGuid = props.chat.chatId.split('::')[0]
+const savedExpanded = getPanelState(parentGuid)?.chatExpanded?.[props.chat.chatId]
+const expanded = ref(savedExpanded ?? true)
+
+watch(expanded, (v) => {
+  const cur = getPanelState(parentGuid) || {}
+  const chatExpanded = { ...(cur.chatExpanded || {}), [props.chat.chatId]: v }
+  patchPanelState(parentGuid, { chatExpanded })
+})
+const focused = ref(false)
 const terminalRef = ref(null)
 const dragOver = ref(false)
 let dragCounter = 0
@@ -75,10 +92,11 @@ function connectWs() {
   ws = new WebSocket(wsUrl)
 
   ws.onopen = () => {
-    // Reset terminal before the server replays its buffer, so reconnects
+    // Fit first so xterm has the correct dimensions before the server's
+    // buffer replay arrives. Reset clears any prior content so reconnects
     // don't stack a duplicate copy of the history on top of existing content.
-    terminalRef.value?.write('\x1bc')
     terminalRef.value?.fit()
+    terminalRef.value?.write('\x1bc')
   }
   ws.onmessage = (event) => {
     terminalRef.value?.write(event.data)
@@ -160,7 +178,30 @@ function markKilled() {
   disconnectWs()
 }
 
-defineExpose({ markKilled })
+function expand() {
+  expanded.value = true
+}
+
+function focus() {
+  requestAnimationFrame(() => terminalRef.value?.focus())
+}
+
+function refresh() {
+  if (!expanded.value) expanded.value = true
+  nextTick(() => {
+    // Refit recomputes cols/rows from the current container size and
+    // emits onResize → server resizes the PTY. Clearing xterm wipes the
+    // stale grid so the agent's redraw (Ctrl+L) lands on a clean canvas.
+    terminalRef.value?.fit()
+    terminalRef.value?.write('\x1bc')
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'input', data: '\x0c' }))
+    }
+    terminalRef.value?.focus()
+  })
+}
+
+defineExpose({ markKilled, expand, focus, refresh })
 </script>
 
 <style scoped>
@@ -172,7 +213,19 @@ defineExpose({ markKilled })
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    flex-grow 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    min-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: 0;
+  min-height: 200px;
+}
+.chat-item.collapsed {
+  flex-grow: 0;
+  min-height: 36px;
 }
 .chat-item:not(.collapsed) {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -260,7 +313,8 @@ defineExpose({ markKilled })
   50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--yellow, #fbbf24) 0%, transparent); }
 }
 
-.chat-close {
+.chat-close,
+.chat-refresh {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -269,18 +323,32 @@ defineExpose({ markKilled })
   border-radius: 4px;
   font-size: 13px;
   line-height: 1;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
-.chat-close:hover {
+.chat-close:hover,
+.chat-refresh:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text);
 }
+.chat-refresh {
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-item-header:hover .chat-refresh {
+  opacity: 1;
+  pointer-events: auto;
+}
 .chat-item-body {
-  flex-shrink: 0;
-  height: 320px;
+  flex: 1;
+  min-height: 0;
   background: #0f1117;
   display: flex;
   position: relative;
+  transition: opacity 0.18s ease;
+}
+.chat-item.collapsed .chat-item-body {
+  opacity: 0;
+  pointer-events: none;
 }
 .chat-item-body :deep(.base-terminal-container) {
   flex: 1;

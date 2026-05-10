@@ -8,6 +8,7 @@ export function useSettings() {
   const envRows = ref([])
   const groupRows = ref([])
   const toolRows = ref([])
+  const skillRows = ref([])
 
   const sysLogPollInterval = ref(500)
   const sysStatusPollInterval = ref(3000)
@@ -27,11 +28,12 @@ export function useSettings() {
   }
 
   async function openSettings() {
-    const [env, groupData, sys, toolsData] = await Promise.all([
+    const [env, groupData, sys, toolsData, skillsData] = await Promise.all([
       api('/api/env'),
       api('/api/groups'),
       api('/api/system'),
       api('/api/tools'),
+      api('/api/skills'),
     ])
 
     sysLogPollInterval.value = sys.logPollInterval || 500
@@ -57,15 +59,23 @@ export function useSettings() {
       return { guid: g.guid, name: g.name || '', color: normalizeColorInput(g.color) }
     })
 
-    toolRows.value = Array.isArray(toolsData) && toolsData.length 
-      ? toolsData.map(t => ({ 
-          label: t.label || '', 
-          path: t.path || '', 
+    toolRows.value = Array.isArray(toolsData) && toolsData.length
+      ? toolsData.map(t => ({
+          label: t.label || '',
+          path: t.path || '',
           isBuiltIn: !!t.isBuiltIn,
           requireConfirmation: !!t.requireConfirmation,
           params: Array.isArray(t.params) ? t.params.map(p => ({ label: p.label || '', type: p.type || 'text' })) : []
         }))
       : [{ label: '', path: '', isBuiltIn: false, requireConfirmation: false, params: [] }]
+
+    skillRows.value = Array.isArray(skillsData)
+      ? skillsData.map(s => ({
+          originalName: s.name || '',
+          name: s.name || '',
+          description: s.description || '',
+        }))
+      : []
 
     showSettingsModal.value = true
   }
@@ -96,6 +106,32 @@ export function useSettings() {
 
   async function removeToolRow(index) {
     toolRows.value.splice(index, 1)
+  }
+
+  function addSkillRow() {
+    skillRows.value.push({ originalName: null, name: '', description: '' })
+  }
+
+  function removeSkillRow(index) {
+    skillRows.value.splice(index, 1)
+  }
+
+  async function uploadSkill(file) {
+    if (!file) return null
+    try {
+      const content = await file.text()
+      const result = await api('/api/skills/upload', 'POST', { content })
+      if (result.error) { alert(result.error); return null }
+      // Refresh from server so the new skill appears with current frontmatter
+      const skillsData = await api('/api/skills')
+      skillRows.value = Array.isArray(skillsData)
+        ? skillsData.map(s => ({ originalName: s.name, name: s.name, description: s.description || '' }))
+        : []
+      return result
+    } catch (e) {
+      alert('Could not read file: ' + (e?.message || e))
+      return null
+    }
   }
 
   async function browseFile(index) {
@@ -156,6 +192,25 @@ export function useSettings() {
     const r4 = await api('/api/tools', 'PUT', tools)
     if (r4.error) { alert(r4.error); return false }
 
+    const skills = []
+    const seenSkillNames = new Set()
+    for (const row of skillRows.value) {
+      const name = row.name.trim()
+      if (!name) continue
+      if (seenSkillNames.has(name)) {
+        alert(`Duplicate skill name: "${name}"`)
+        return false
+      }
+      seenSkillNames.add(name)
+      skills.push({
+        originalName: row.originalName || null,
+        name,
+        description: row.description.trim(),
+      })
+    }
+    const r5 = await api('/api/skills', 'PUT', skills)
+    if (r5.error) { alert(r5.error); return false }
+
     const sysUpdate = {
       port: parseInt(sysPort.value) || 1337,
       maxLogLines: parseInt(sysMaxLogLines.value) || 500,
@@ -199,6 +254,7 @@ export function useSettings() {
     envRows,
     groupRows,
     toolRows,
+    skillRows,
     sysLogPollInterval,
     sysStatusPollInterval,
     sysPopoverPollInterval,
@@ -214,6 +270,9 @@ export function useSettings() {
     addToolRow,
     removeToolRow,
     browseFile,
+    addSkillRow,
+    removeSkillRow,
+    uploadSkill,
     reorderGroups,
     saveSettings,
     handleImport,

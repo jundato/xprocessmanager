@@ -54,6 +54,15 @@
                 <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
                   {{ selectedFiles.length }} selected
                 </span>
+                <button
+                  v-if="selectedFiles.length"
+                  class="btn-ghost btn-icon workspace-bulk-delete"
+                  :disabled="deleting"
+                  @click="deleteSelected"
+                  title="Delete selected"
+                >
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
               <div v-if="searchLoading" class="workspace-empty">Searching...</div>
               <div v-if="!searchLoading && !searchResults.length && searchQuery" class="workspace-empty">No results found</div>
@@ -79,6 +88,14 @@
                 <span class="search-result-badge" :class="result.type === 'file' ? 'badge-file' : 'badge-content'">
                   {{ result.type === 'file' ? 'name' : 'content' }}
                 </span>
+                <button
+                  class="btn-ghost btn-icon workspace-row-delete"
+                  :disabled="deleting"
+                  @click.stop="deleteEntry(result.path, false)"
+                  title="Delete file"
+                >
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
             </div>
           </template>
@@ -107,6 +124,15 @@
                 <span v-if="selectedFiles.length" style="margin-left: auto; text-transform: none; color: var(--blue)">
                   {{ selectedFiles.length }} selected
                 </span>
+                <button
+                  v-if="selectedFiles.length"
+                  class="btn-ghost btn-icon workspace-bulk-delete"
+                  :disabled="deleting"
+                  @click="deleteSelected"
+                  title="Delete selected"
+                >
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
               <div v-if="currentPath" class="workspace-file-item directory" @click="navigateUp">
                 <div style="width: 14px; flex-shrink: 0"></div>
@@ -129,6 +155,14 @@
                 <i :class="fileIcon(file)" style="width: 16px"></i>
                 <span class="file-name">{{ file.name }}</span>
                 <span v-if="!file.isDirectory && file.size != null" class="file-size">{{ formatSize(file.size) }}</span>
+                <button
+                  class="btn-ghost btn-icon workspace-row-delete"
+                  :disabled="deleting"
+                  @click.stop="deleteEntry(currentPath ? `${currentPath}/${file.name}` : file.name, file.isDirectory)"
+                  :title="file.isDirectory ? 'Delete folder' : 'Delete file'"
+                >
+                  <i class="fa-solid fa-trash"></i>
+                </button>
               </div>
               <div v-if="!listLoading && !files.length" class="workspace-empty">Empty directory</div>
               <div v-if="listLoading" class="workspace-empty">Loading...</div>
@@ -222,7 +256,10 @@
 <script setup>
 import { ref, watch, computed, nextTick, onMounted, onUnmounted, shallowRef, markRaw } from 'vue'
 import { api } from '../composables/useApi.js'
+import { useConfirm } from '../composables/useConfirm.js'
 import MermaidEditor from './MermaidEditor.vue'
+
+const { showConfirm } = useConfirm()
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -233,6 +270,8 @@ const props = defineProps({
   logPanelHeight: { type: Number, default: 0 },
   initialFile: { type: String, default: null },
   initialLine: { type: Number, default: null },
+  initialColumn: { type: Number, default: null },
+  initialScrollTop: { type: Number, default: null },
   docked: { type: Boolean, default: false },
   dockedWidth: { type: Number, default: 480 },
   dockedHeight: { type: Number, default: 300 },
@@ -410,6 +449,65 @@ function handleFileClick(file) {
   } else {
     openFileView(currentPath.value ? currentPath.value + '/' + file.name : file.name)
   }
+}
+
+// ── Deletion ────────────────────────────────
+const deleting = ref(false)
+
+function closeTabsForPath(p) {
+  const prefix = p.endsWith('/') ? p : p + '/'
+  const toClose = tabs.value.filter((t) => t.path === p || (t.path && t.path.startsWith(prefix)))
+  toClose.forEach((t) => closeTab(t.id))
+}
+
+async function performDelete(paths) {
+  if (!props.nodeGuid || !paths.length) return
+  deleting.value = true
+  const res = await api(
+    `/api/processes/${encodeURIComponent(props.nodeGuid)}/file`,
+    'DELETE',
+    { paths }
+  )
+  deleting.value = false
+  if (res.error && (!res.deleted || !res.deleted.length)) {
+    listError.value = res.error
+    return
+  }
+  const deleted = res.deleted || paths
+  deleted.forEach(closeTabsForPath)
+  selectedFiles.value = selectedFiles.value.filter((p) => !deleted.includes(p))
+  if (searchActive.value) {
+    searchResults.value = searchResults.value.filter((r) => !deleted.includes(r.path))
+  }
+  await fetchFiles(currentPath.value)
+}
+
+async function deleteEntry(path, isDirectory) {
+  const ok = await showConfirm({
+    title: isDirectory ? 'Delete folder' : 'Delete file',
+    message: isDirectory
+      ? `Delete folder "${path}" and all its contents?\n\nThis cannot be undone.`
+      : `Delete file "${path}"?\n\nThis cannot be undone.`,
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    danger: true,
+  })
+  if (!ok) return
+  await performDelete([path])
+}
+
+async function deleteSelected() {
+  const paths = [...selectedFiles.value]
+  if (!paths.length) return
+  const ok = await showConfirm({
+    title: 'Delete selected',
+    message: `Delete ${paths.length} item${paths.length === 1 ? '' : 's'}?\n\nThis cannot be undone.`,
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    danger: true,
+  })
+  if (!ok) return
+  await performDelete(paths)
 }
 
 // ── Editor / Preview State ──────────────────
@@ -632,14 +730,17 @@ async function loadMonaco() {
   return monaco
 }
 
-async function openFileView(filePath, goToLine) {
+async function openFileView(filePath, goToLine, goToColumn, scrollTop) {
   const existingTab = tabs.value.find((t) => t.path === filePath)
   if (existingTab) {
     activeTabId.value = existingTab.id
     if (goToLine && editorInstance && existingTab.model) {
       editorInstance.revealLineInCenter(goToLine)
-      editorInstance.setPosition({ lineNumber: goToLine, column: 1 })
+      editorInstance.setPosition({ lineNumber: goToLine, column: goToColumn || 1 })
       editorInstance.focus()
+    }
+    if (typeof scrollTop === 'number' && editorInstance) {
+      editorInstance.setScrollTop(scrollTop)
     }
     return
   }
@@ -688,11 +789,11 @@ async function openFileView(filePath, goToLine) {
     await renderMermaidBlocks()
   } else {
     await nextTick()
-    await createEditor(filePath, res.content, goToLine)
+    await createEditor(filePath, res.content, goToLine, goToColumn, scrollTop)
   }
 }
 
-async function createEditor(filePath, content, goToLine) {
+async function createEditor(filePath, content, goToLine, goToColumn, scrollTop) {
   if (!editorContainerRef.value) return
 
   const monaco = await loadMonaco()
@@ -733,8 +834,11 @@ async function createEditor(filePath, content, goToLine) {
 
   if (goToLine) {
     editorInstance.revealLineInCenter(goToLine)
-    editorInstance.setPosition({ lineNumber: goToLine, column: 1 })
+    editorInstance.setPosition({ lineNumber: goToLine, column: goToColumn || 1 })
     editorInstance.focus()
+  }
+  if (typeof scrollTop === 'number') {
+    editorInstance.setScrollTop(scrollTop)
   }
 }
 
@@ -873,10 +977,26 @@ const initWorkspace = () => {
     fetchFiles('')
 
     if (props.initialFile) {
-      openFileView(props.initialFile, props.initialLine)
+      openFileView(props.initialFile, props.initialLine, props.initialColumn, props.initialScrollTop)
     }
   }
 }
+
+function snapshot() {
+  if (!activeTab.value || activeTab.value.type !== 'file') return null
+  const path = activeTab.value.path
+  let line = null
+  let column = null
+  let scrollTop = null
+  if (editorInstance) {
+    const pos = editorInstance.getPosition()
+    if (pos) { line = pos.lineNumber; column = pos.column }
+    scrollTop = editorInstance.getScrollTop()
+  }
+  return { file: path, line, column, scrollTop }
+}
+
+defineExpose({ snapshot })
 
 onMounted(() => {
   initWorkspace()

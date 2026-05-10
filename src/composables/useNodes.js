@@ -104,6 +104,7 @@ export function useNodes() {
         type: p.type,
         tools: p.tools,
         needsInput: p.needsInput,
+        chatCount: p.chatCount,
       })),
       groups: defs,
     })
